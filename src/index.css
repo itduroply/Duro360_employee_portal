@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-gray-50 font-sans font-normal text-gray-500 antialiased;
+}
+
+/* Hides a scrollbar but keeps the area scrollable (sidebar menu). */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Thin scrollbar for wide tables. */
+.custom-scrollbar::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-gray-200;
+}
+
+/* Every animate-* class (login, dashboard, schemes) stops for people who
+   ask the OS for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  [class*='animate-'] {
+    animation: none !important;
+  }
+}
+
+/* Printed duro certificate (pages/Warranty/CertificatePrintPage.jsx):
+   A4 pages, everything else on screen hidden. */
+@page {
+  size: A4;
+  margin: 0;
+}
+@media print {
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .cert-sheet {
+    box-shadow: none !important;
+    margin: 0 !important;
+    break-after: page;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
