@@ -56,7 +56,7 @@ function validate(form) {
 
 const FIELD_IDS = { name: 'admin-name', employeeCode: 'admin-employee-code', email: 'admin-email', mobile: 'admin-mobile', branchId: 'admin-branch', password: 'admin-password' };
 
-function PermissionCheckboxes({ selected, onChange }) {
+export function PermissionCheckboxes({ selected, onChange }) {
   function toggle(key) {
     onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
   }

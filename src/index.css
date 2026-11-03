@@ -53,3 +53,22 @@ body {
     print-color-adjust: exact;
   }
 }
+
+/* Culture carousel and login artwork. These are named cc-* (not animate-*) on
+   purpose: they are the point of the banner, so the reduced-motion rule above
+   does not switch them off. */
+@keyframes cc-in-left { from { opacity: 0; transform: translateX(-60px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes cc-in-right { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes cc-pop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes cc-rise { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cc-bar { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes cc-walk { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes cc-sway { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(10px); } }
+@keyframes cc-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+.cc-in-left { animation: cc-in-left 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cc-in-right { animation: cc-in-right 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cc-pop { animation: cc-pop 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cc-rise { animation: cc-rise 1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cc-bar { animation: cc-bar 4s linear both; }
+.cc-walk { animation: cc-walk 1.4s cubic-bezier(0.22, 1, 0.36, 1) both, cc-sway 5s ease-in-out 1.4s infinite; }
+.cc-bob { animation: cc-bob 3s ease-in-out infinite; }

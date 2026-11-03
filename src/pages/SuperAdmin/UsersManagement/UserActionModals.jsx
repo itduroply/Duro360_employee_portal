@@ -18,7 +18,7 @@ function Req({ children }) {
 // ({ id, name, email, mobile_number, employee_id, selling_branch_id }); null
 // keeps it closed. The password is not touched here.
 export function EditUserModal({ user, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: '', employeeId: '', email: '', mobile: '', branchId: '' });
+  const [form, setForm] = useState({ name: '', employeeId: '', email: '', mobile: '', branchId: '', reportingManager: '' });
   const [branches, setBranches] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
@@ -33,6 +33,7 @@ export function EditUserModal({ user, onClose, onSaved }) {
       email: user.email || '',
       mobile: user.mobile_number || '',
       branchId: user.selling_branch_id ? String(user.selling_branch_id) : '',
+      reportingManager: user.reporting_manager || '',
     });
     setErrors({});
     setSubmitError('');
@@ -83,6 +84,8 @@ export function EditUserModal({ user, onClose, onSaved }) {
         email: form.email.trim(),
         mobile: form.mobile.trim(),
         branchId: form.branchId,
+        // Only Employees (uploaded from the HR sheet) have a reporting manager.
+        ...(idRequired ? { reportingManager: form.reportingManager.trim() } : {}),
       });
       onSaved(user, result);
     } catch (err) {
@@ -148,6 +151,14 @@ export function EditUserModal({ user, onClose, onSaved }) {
               </option>
             ))}
           </Select>
+          {idRequired && (
+            <TextInput
+              id="edit-user-manager"
+              label="Reporting Manager"
+              value={form.reportingManager}
+              onChange={(e) => set('reportingManager', e.target.value)}
+            />
+          )}
         </div>
         {submitError && (
           <Alert variant="error" className="mt-2">

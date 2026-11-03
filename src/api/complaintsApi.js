@@ -41,8 +41,16 @@ export const complaintsApi = {
     return Object.fromEntries(statuses.map((s, i) => [s, results[i].count ?? 0]));
   },
 
-  async dealers() {
-    const { data, error } = await supabase.rpc('complaint_dealers');
+  // Selling branches this person may file for (all, or just their own).
+  async branches() {
+    const { data, error } = await supabase.rpc('complaint_branches');
+    fail(error);
+    return data;
+  },
+
+  // Dealers with sales in one selling branch.
+  async dealers(branch) {
+    const { data, error } = await supabase.rpc('complaint_dealers', { p_branch: branch });
     fail(error);
     return data;
   },

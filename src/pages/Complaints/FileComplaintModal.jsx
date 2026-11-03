@@ -6,15 +6,29 @@ import Select from '../../components/common/Select.jsx';
 import Alert from '../../components/common/Alert.jsx';
 import { CloseIcon } from '../../components/common/icons.jsx';
 import { NAV_ICONS } from '../../components/Sidebar/navIcons.jsx';
-import { CHECKBOX, HINT_ERROR, INPUT, INPUT_OK, LABEL } from '../../components/common/formStyles.js';
+import { HINT_ERROR, INPUT, INPUT_ERROR, INPUT_OK, LABEL } from '../../components/common/formStyles.js';
 import { complaintsApi } from '../../api/complaintsApi';
 import { formatDate } from '../../utils/format.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // matches the complaint-docs bucket limit
 const EMPTY_FORM = {
-  origin: 'DEALER', dealerCode: '', customerName: '', customerMobile: '', invoiceNo: '',
+  origin: 'DEALER', sellingBranch: '', dealerCode: '', customerName: '', customerMobile: '', invoiceNo: '',
   amount: '', installationContext: '', remarks: '',
 };
+
+// Nature of complaint, picked per product line (primary is required, secondary optional).
+const NATURES = [
+  'Delamination',
+  'Borer / Termite Attack',
+  'Moisture Absorption / Swelling',
+  'Surface Defect / Finish Issue',
+  'Size / Dimension Mismatch',
+  'Warping / Bending',
+  'Color Mismatch',
+  'Core Gap / Void',
+  'Breakage / Damage in Transit',
+  'Other',
+];
 
 const ORIGINS = [
   {
@@ -203,7 +217,30 @@ function OriginCards({ value, onChange }) {
   );
 }
 
-function InvoiceLines({ dealerCode, invoiceNo, lines, isLoading, error, selected, onToggle }) {
+// Metres -> whole feet, so 2.44 x 1.22 reads as the trade size 8 x 4 ft.
+const toFeet = (m) => Math.round(Number(m) / 0.3048);
+const trimNumber = (n) => String(Number(n));
+
+function sizeLabel(l) {
+  if (l.length_m == null || l.width_m == null) return { main: '—', sub: '' };
+  return {
+    main: `${toFeet(l.length_m)} × ${toFeet(l.width_m)} ft`,
+    sub: `${trimNumber(l.length_m)} × ${trimNumber(l.width_m)} m`,
+  };
+}
+
+function InfoCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
+      <p className="text-theme-xs font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <p className="mt-1 truncate text-theme-sm font-semibold text-gray-800">{value || '—'}</p>
+    </div>
+  );
+}
+
+// Product lines of the chosen invoice: one row per item + thickness + size,
+// with the defective quantity and nature of complaint for each line.
+function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, lineErrors }) {
   if (!invoiceNo) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-gray-200 px-4 py-8 text-center text-theme-sm text-gray-500">
@@ -219,30 +256,101 @@ function InvoiceLines({ dealerCode, invoiceNo, lines, isLoading, error, selected
   if (lines.length === 0) {
     return <p className="rounded-2xl border border-gray-200 px-4 py-6 text-center text-theme-sm text-gray-500">No product lines found for {invoiceNo}.</p>;
   }
+  const involved = lines.filter((l) => Number(defects[l.line_key]?.qty) > 0).length;
+  const cell = 'px-2 py-2.5 align-top';
+  const natureOptions = (
+    <>
+      <option value="">— select —</option>
+      {NATURES.map((n) => (
+        <option key={n} value={n}>
+          {n}
+        </option>
+      ))}
+    </>
+  );
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200">
-      <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-2.5 text-theme-xs text-gray-500">
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5 text-theme-xs text-gray-500">
         <span className="font-medium text-gray-700">Product lines on {invoiceNo}</span>
-        <span>{selected.size} of {lines.length} selected</span>
+        <span>{involved} of {lines.length} with defects</span>
       </div>
-      <ul className="custom-scrollbar max-h-56 divide-y divide-gray-100 overflow-y-auto">
-        {lines.map((l) => (
-          <li key={`${dealerCode}-${l.src_id}`}>
-            <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
-              <input type="checkbox" checked={selected.has(l.src_id)} onChange={() => onToggle(l.src_id)} className={CHECKBOX} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-theme-sm font-medium text-gray-800">{l.item_name || 'Item'}</span>
-                <span className="block truncate text-theme-xs text-gray-500">
-                  {[l.brand, l.sub_brand_name, l.thickness ? `${Number(l.thickness)} mm` : null].filter(Boolean).join(' · ') || '—'}
-                </span>
-              </span>
-              <span className="shrink-0 text-right text-theme-xs text-gray-500">
-                {l.quantity_pcs !== null && l.quantity_pcs !== undefined ? `${Number(l.quantity_pcs).toLocaleString('en-IN')} ${l.uom_code || 'pcs'}` : '—'}
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
+      <div className="custom-scrollbar overflow-x-auto">
+        <table className="w-full min-w-[60rem] text-left text-theme-sm">
+          <thead className="bg-gray-50 text-theme-xs uppercase tracking-wider text-gray-500">
+            <tr>
+              <th className="px-4 py-2.5 font-semibold">Product</th>
+              <th className="px-2 py-2.5 font-semibold">Thick</th>
+              <th className="px-2 py-2.5 font-semibold">Size</th>
+              <th className="px-2 py-2.5 font-semibold">Qty Supplied</th>
+              <th className="px-2 py-2.5 font-semibold">Qty Defective <span className="text-error-500">*</span></th>
+              <th className="px-2 py-2.5 font-semibold">Primary Nature <span className="text-error-500">*</span></th>
+              <th className="px-2 py-2.5 pr-4 font-semibold">Secondary Nature</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {lines.map((l) => {
+              const size = sizeLabel(l);
+              const d = defects[l.line_key] || {};
+              const on = Number(d.qty) > 0;
+              const err = lineErrors?.[l.line_key] || {};
+              return (
+                <tr key={l.line_key} className={on ? 'bg-brand-25' : ''}>
+                  <td className={`${cell} min-w-[11rem] px-4`}>
+                    <span className="block font-medium text-gray-800">{l.item_name || 'Item'}</span>
+                    {l.brand && <span className="block text-theme-xs text-gray-500">{l.brand}</span>}
+                  </td>
+                  <td className={`${cell} whitespace-nowrap text-gray-700`}>{l.thickness != null ? `${trimNumber(l.thickness)} mm` : '—'}</td>
+                  <td className={`${cell} whitespace-nowrap text-gray-700`}>
+                    {size.main}
+                    {size.sub && <span className="block text-theme-xs text-gray-400">{size.sub}</span>}
+                  </td>
+                  <td className={`${cell} whitespace-nowrap font-medium text-gray-800`}>
+                    {l.quantity != null ? `${Number(l.quantity).toLocaleString('en-IN')} ${l.uom_code || ''}`.trim() : '—'}
+                  </td>
+                  <td className={`${cell} w-28`}>
+                    <input
+                      type="number"
+                      min="0"
+                      max={l.quantity ?? undefined}
+                      step="1"
+                      inputMode="numeric"
+                      placeholder="0"
+                      value={d.qty ?? ''}
+                      onChange={(e) => onChange(l.line_key, { qty: e.target.value })}
+                      aria-label={`Defective quantity for ${l.item_name}`}
+                      className={`${INPUT} ${err.qty ? INPUT_ERROR : INPUT_OK}`}
+                    />
+                    {err.qty && <p className={HINT_ERROR}>{err.qty}</p>}
+                  </td>
+                  <td className={`${cell} w-56`}>
+                    <Select
+                      value={d.primary ?? ''}
+                      onChange={(e) => onChange(l.line_key, { primary: e.target.value })}
+                      aria-label={`Primary nature for ${l.item_name}`}
+                      className={err.primary ? '!border-error-300' : ''}
+                    >
+                      {natureOptions}
+                    </Select>
+                    {err.primary && <p className={HINT_ERROR}>{err.primary}</p>}
+                  </td>
+                  <td className={`${cell} w-56 pr-4`}>
+                    <Select
+                      value={d.secondary ?? ''}
+                      onChange={(e) => onChange(l.line_key, { secondary: e.target.value })}
+                      aria-label={`Secondary nature for ${l.item_name}`}
+                    >
+                      {natureOptions}
+                    </Select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="border-t border-gray-100 bg-gray-50 px-4 py-2.5 text-theme-xs text-gray-500">
+        Nature of Complaint is captured per product line. Enter a defective quantity on at least one line.
+      </p>
     </div>
   );
 }
@@ -257,20 +365,23 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
   const [submitError, setSubmitError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
+  const [branches, setBranches] = useState([]);
+  const [branchesState, setBranchesState] = useState({ loading: false, error: '' });
   const [dealers, setDealers] = useState([]);
   const [dealersState, setDealersState] = useState({ loading: false, error: '' });
   const [invoices, setInvoices] = useState([]);
   const [invoicesState, setInvoicesState] = useState({ loading: false, error: '' });
   const [lines, setLines] = useState([]);
   const [linesState, setLinesState] = useState({ loading: false, error: '' });
-  const [selectedLines, setSelectedLines] = useState(new Set());
+  const [defects, setDefects] = useState({});
 
   const set = (key, value) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: undefined }));
   };
 
-  // Fresh form each time it opens; dealers load once per opening.
+  // Fresh form each time it opens; selling branches load once per opening.
+  // A person tied to one branch gets it picked for them.
   useEffect(() => {
     if (!open) return undefined;
     let cancelled = false;
@@ -280,24 +391,46 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     setExtras([]);
     setErrors({});
     setSubmitError('');
+    setDealers([]);
     setInvoices([]);
     setLines([]);
-    setSelectedLines(new Set());
-    setDealersState({ loading: true, error: '' });
+    setDefects({});
+    setBranchesState({ loading: true, error: '' });
     complaintsApi
-      .dealers()
-      .then((rows) => !cancelled && (setDealers(rows), setDealersState({ loading: false, error: '' })))
-      .catch((err) => !cancelled && setDealersState({ loading: false, error: err.message || 'Could not load dealers.' }));
+      .branches()
+      .then((rows) => {
+        if (cancelled) return;
+        setBranches(rows);
+        setBranchesState({ loading: false, error: '' });
+        if (rows.length === 1) setForm((f) => ({ ...f, sellingBranch: rows[0].name }));
+      })
+      .catch((err) => !cancelled && setBranchesState({ loading: false, error: err.message || 'Could not load selling branches.' }));
     return () => {
       cancelled = true;
     };
   }, [open]);
 
+  // Dealers follow the selling branch.
+  useEffect(() => {
+    setDealers([]);
+    setDealersState({ loading: false, error: '' });
+    if (!form.sellingBranch) return undefined;
+    let cancelled = false;
+    setDealersState({ loading: true, error: '' });
+    complaintsApi
+      .dealers(form.sellingBranch)
+      .then((rows) => !cancelled && (setDealers(rows), setDealersState({ loading: false, error: '' })))
+      .catch((err) => !cancelled && setDealersState({ loading: false, error: err.message || 'Could not load dealers.' }));
+    return () => {
+      cancelled = true;
+    };
+  }, [form.sellingBranch]);
+
   // Invoices follow the dealer.
   useEffect(() => {
     setInvoices([]);
     setLines([]);
-    setSelectedLines(new Set());
+    setDefects({});
     if (!form.dealerCode) return undefined;
     let cancelled = false;
     setInvoicesState({ loading: true, error: '' });
@@ -313,7 +446,7 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
   // Product lines follow the invoice; all start ticked.
   useEffect(() => {
     setLines([]);
-    setSelectedLines(new Set());
+    setDefects({});
     if (!form.dealerCode || !form.invoiceNo) return undefined;
     let cancelled = false;
     setLinesState({ loading: true, error: '' });
@@ -322,7 +455,6 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
       .then((rows) => {
         if (cancelled) return;
         setLines(rows);
-        setSelectedLines(new Set(rows.map((r) => r.src_id)));
         setLinesState({ loading: false, error: '' });
       })
       .catch((err) => !cancelled && setLinesState({ loading: false, error: err.message || 'Could not load product lines.' }));
@@ -333,27 +465,42 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
 
   const dealer = useMemo(() => dealers.find((d) => d.customer_code === form.dealerCode), [dealers, form.dealerCode]);
   const invoice = useMemo(() => invoices.find((i) => i.document_number === form.invoiceNo), [invoices, form.invoiceNo]);
+  const branch = useMemo(() => branches.find((b) => b.name === form.sellingBranch), [branches, form.sellingBranch]);
   const isEndCustomer = form.origin === 'END_CUSTOMER';
 
-  function toggleLine(id) {
-    setSelectedLines((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setErrors((e) => ({ ...e, lines: undefined }));
+  function changeDefect(id, patch) {
+    setDefects((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+    setErrors((e) => ({ ...e, lines: undefined, lineErrors: undefined }));
   }
+
+  // Lines with a defective quantity are the ones the complaint is about.
+  const involvedLines = useMemo(() => lines.filter((l) => Number(defects[l.line_key]?.qty) > 0), [lines, defects]);
 
   function validate() {
     const e = {};
+    if (!form.sellingBranch) e.sellingBranch = 'Select a selling branch.';
     if (!form.dealerCode) e.dealerCode = 'Select a dealer.';
     if (isEndCustomer) {
       if (!form.customerName.trim()) e.customerName = 'Customer name is required.';
       if (!/^[6-9]\d{9}$/.test(form.customerMobile.trim())) e.customerMobile = 'Enter a 10-digit mobile number.';
     }
     if (!form.invoiceNo) e.invoiceNo = 'Select an invoice.';
-    else if (selectedLines.size === 0) e.lines = 'Select at least one product line.';
+    else if (involvedLines.length === 0) e.lines = 'Enter a defective quantity on at least one product line.';
+    else {
+      const lineErrors = {};
+      involvedLines.forEach((l) => {
+        const d = defects[l.line_key];
+        const le = {};
+        if (!Number.isInteger(Number(d.qty))) le.qty = 'Whole number only.';
+        else if (l.quantity != null && Number(d.qty) > Number(l.quantity)) le.qty = `Max ${Number(l.quantity)}.`;
+        if (!d.primary) le.primary = 'Select the primary nature.';
+        if (Object.keys(le).length) lineErrors[l.line_key] = le;
+      });
+      if (Object.keys(lineErrors).length) {
+        e.lines = 'Fix the highlighted product lines.';
+        e.lineErrors = lineErrors;
+      }
+    }
     if (!(Number(form.amount) > 0)) e.amount = 'Enter the complaint amount.';
     if (invoiceFile.length === 0) e.invoiceFile = 'Attach the invoice copy.';
     if (photos.length === 0) e.photos = 'Attach at least one site photograph.';
@@ -373,17 +520,21 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     setSubmitError('');
     setIsSaving(true);
     try {
-      const chosen = lines
-        .filter((l) => selectedLines.has(l.src_id))
-        .map((l) => ({ item_name: l.item_name, brand: l.brand, quantity: l.quantity_pcs, uom: l.uom_code }));
       const complaintNo = await complaintsApi.file({
         origin: form.origin,
+        selling_branch: form.sellingBranch,
         dealer_code: form.dealerCode,
         customer_name: isEndCustomer ? form.customerName.trim() : null,
         customer_mobile: isEndCustomer ? form.customerMobile.trim() : null,
         invoice_no: form.invoiceNo,
-        invoice_date: invoice?.document_date || null,
-        lines: chosen,
+        // The server reads the rows back from the sales records by these keys.
+        line_keys: involvedLines.map((l) => l.line_key),
+        line_defects: involvedLines.map((l) => ({
+          line_key: l.line_key,
+          qty_defective: Number(defects[l.line_key].qty),
+          primary_nature: defects[l.line_key].primary,
+          secondary_nature: defects[l.line_key].secondary || null,
+        })),
         amount: Number(form.amount),
         installation_context: form.installationContext,
         remarks: form.remarks,
@@ -405,7 +556,7 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
   return (
     <Modal
       open={open}
-      size="xl"
+      size="2xl"
       title="File a New Complaint"
       subtitle="One sheet, top to bottom."
       icon={ComplaintsIcon && <ComplaintsIcon />}
@@ -426,6 +577,30 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         <SectionTitle icon={SECTION_ICONS.parties}>A. Origination &amp; Parties</SectionTitle>
         <OriginCards value={form.origin} onChange={(v) => set('origin', v)} />
 
+        <div id="complaint-sellingBranch" className="mb-4">
+          <Select
+            id="complaint-branch"
+            label={<Req>Dealer Selling Branch</Req>}
+            value={form.sellingBranch}
+            onChange={(e) => {
+              set('sellingBranch', e.target.value);
+              set('dealerCode', '');
+              set('invoiceNo', '');
+            }}
+            disabled={branchesState.loading || branches.length === 1}
+            className={errors.sellingBranch ? '!border-error-300' : ''}
+          >
+            <option value="">{branchesState.loading ? 'Loading branches…' : '— select —'}</option>
+            {branches.map((b) => (
+              <option key={b.name} value={b.name}>
+                {b.name}
+              </option>
+            ))}
+          </Select>
+          {errors.sellingBranch && <p className={HINT_ERROR}>{errors.sellingBranch}</p>}
+          {branchesState.error && <Alert variant="error" className="mt-2">{branchesState.error}</Alert>}
+        </div>
+
         <div id="complaint-dealerCode" className="mb-1">
           <Select
             id="complaint-dealer"
@@ -435,10 +610,12 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
               set('dealerCode', e.target.value);
               set('invoiceNo', '');
             }}
-            disabled={dealersState.loading}
+            disabled={!form.sellingBranch || dealersState.loading}
             className={errors.dealerCode ? '!border-error-300' : ''}
           >
-            <option value="">{dealersState.loading ? 'Loading dealers…' : '— select —'}</option>
+            <option value="">
+              {!form.sellingBranch ? 'Select a selling branch first' : dealersState.loading ? 'Loading dealers…' : dealers.length === 0 ? 'No dealers in this branch' : '— select —'}
+            </option>
             {dealers.map((d) => (
               <option key={d.customer_code} value={d.customer_code}>
                 {d.customer_name} ({d.customer_code})
@@ -451,7 +628,7 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
           ) : (
             <p className="mt-1.5 flex items-center gap-1.5 text-theme-xs text-gray-500">
               <Svg className="h-3.5 w-3.5">{ORIGINS[0].icon}</Svg>
-              From the Dealer Master{dealer?.selling_branch ? `, ${dealer.selling_branch} branch` : ', filtered to your branch'}.
+              Dealers with sales in {form.sellingBranch || 'the selected branch'}, from the sales records.
             </p>
           )}
         </div>
@@ -510,15 +687,22 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
             <p className="mt-1.5 text-theme-xs text-gray-500">Billed-from-Duroply invoices for this dealer, pulled from the backend, not typed.</p>
           )}
         </div>
+        {form.invoiceNo && (
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <InfoCard label="Invoice Date" value={invoice?.document_date ? formatDate(invoice.document_date) : ''} />
+            <InfoCard label="Zone" value={branch?.zone || dealer?.zone} />
+            <InfoCard label="Selling Branch" value={form.sellingBranch} />
+          </div>
+        )}
         <div id="complaint-lines">
           <InvoiceLines
-            dealerCode={form.dealerCode}
             invoiceNo={form.invoiceNo}
             lines={lines}
             isLoading={linesState.loading}
             error={linesState.error}
-            selected={selectedLines}
-            onToggle={toggleLine}
+            defects={defects}
+            onChange={changeDefect}
+            lineErrors={errors.lineErrors}
           />
           {errors.lines && <p className={HINT_ERROR}>{errors.lines}</p>}
         </div>

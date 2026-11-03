@@ -100,6 +100,26 @@ export default {
         'sidebar-texture': theme.sidebarTexture,
       },
       keyframes: {
+        'walk-in': {
+          '0%': { opacity: '0', transform: 'translateX(-40px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        sway: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '50%': { transform: 'translateX(10px)' },
+        },
+        'slide-in-right': {
+          '0%': { opacity: '0', transform: 'translateX(40px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        'slide-in-left': {
+          '0%': { opacity: '0', transform: 'translateX(-40px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        'zoom-in': {
+          '0%': { opacity: '0', transform: 'scale(0.85)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
         'fade-in': {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },
@@ -146,6 +166,12 @@ export default {
         },
       },
       animation: {
+        // Walks in from the left, then sways a few pixels.
+        'walk-in': 'walk-in 1.4s cubic-bezier(0.22, 1, 0.36, 1) both, sway 5s ease-in-out 1.4s infinite',
+        'slide-in-right': 'slide-in-right 1s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'slide-in-left': 'slide-in-left 1s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'zoom-in': 'zoom-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'progress-4s': 'grow-x 4s linear both',
         'fade-in': 'fade-in 1s ease-out both',
         'fade-in-up': 'fade-in-up 0.5s ease-out both',
         'pop-in': 'pop-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both',

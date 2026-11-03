@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { CloseIcon } from './icons.jsx';
 
 // Centered dialog on a dimmed backdrop. Esc, the ✕ or a click outside call
@@ -13,9 +14,11 @@ export default function Modal({ open, title, subtitle, icon, onClose, locked = f
   }, [open, locked, onClose]);
 
   if (!open) return null;
-  const width = size === 'xl' ? 'max-w-3xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md';
+  const width = size === '2xl' ? 'max-w-6xl' : size === 'xl' ? 'max-w-3xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md';
 
-  return (
+  // Rendered on <body> so no animated page wrapper can trap `fixed` and let the
+  // sidebar or header paint over the dialog.
+  return createPortal(
     <div
       className="fixed inset-0 z-[99999] flex items-center justify-center bg-gray-900/50 p-4 backdrop-blur-sm"
       onMouseDown={(e) => e.target === e.currentTarget && !locked && onClose()}
@@ -49,6 +52,7 @@ export default function Modal({ open, title, subtitle, icon, onClose, locked = f
         <div className="custom-scrollbar flex-1 overflow-y-auto px-6 py-5">{children}</div>
         {footer && <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
