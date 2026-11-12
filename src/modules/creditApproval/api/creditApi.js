@@ -61,7 +61,8 @@ export const creditApi = {
   // Permanent requests only: average payment days, last revision date and the
   // Temporary unlock counts for one financial year.
   getPermanentInsight: (customerCode, financialYearStart) => call('get-permanent-insight', { customerCode, financialYearStart }),
-  submitRequisition: (formData) => call('submit-requisition', { formData }),
+  // attachments are results of uploadAttachment made before the request exists.
+  submitRequisition: (formData, attachments = []) => call('submit-requisition', { formData, attachments }),
 
   // The conversation on one request, plus the decision once there is one.
   async getQueryThread(requisitionId) {
@@ -80,10 +81,11 @@ export const creditApi = {
   replyQuery: (requisitionId, message, attachments = []) => call('reply-requisition-query', { requisitionId, message, attachments }),
 
   // Stores one file against a request. The result goes in the attachments of
-  // the query or reply that is sent next.
+  // the query or reply that is sent next. With no requisitionId (a new request
+  // that is not sent yet) the Requester keeps the file until it is submitted.
   uploadAttachment(requisitionId, file) {
     const body = new FormData();
-    body.append('requisitionId', requisitionId);
+    if (requisitionId) body.append('requisitionId', requisitionId);
     body.append('file', file);
     return call('upload-attachment', body);
   },

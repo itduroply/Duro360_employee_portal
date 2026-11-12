@@ -3,17 +3,17 @@ import LatestSchemes from './LatestSchemes.jsx';
 import QuickAccess from './QuickAccess.jsx';
 import RecentActivity from './RecentActivity.jsx';
 
-const BASE = '/superadmin';
-
 /**
- * Super Admin Console landing page: the culture banner carousel, then the
- * latest schemes, shortcuts and recent activity behind a Coming soon board.
+ * Console landing page, the same for every login: the culture banner carousel,
+ * then the latest schemes, shortcuts and recent activity behind a Coming soon
+ * board. basePath is the console the page sits in (/superadmin or /admin).
  *
  * The dealer money cards (StatCards, dealer_money_summary) are parked until
  * the figures are ready. Latest Schemes reads the schemes table; Recent
  * Activity shows sample audit rows until audit logging is connected.
  */
-export default function SuperAdminOverview() {
+export default function SuperAdminOverview({ basePath = '/superadmin' }) {
+  const BASE = basePath;
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <CultureCarousel />

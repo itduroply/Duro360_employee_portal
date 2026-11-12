@@ -364,15 +364,20 @@ export default function CultureCarousel() {
 
   return (
     <section
-      className="relative overflow-hidden rounded-3xl shadow-theme-sm"
+      className="relative select-none overflow-hidden rounded-3xl shadow-theme-sm [-webkit-touch-callout:none] [&_img]:pointer-events-none [&_img]:select-none"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
+      // Text and images on the banner cannot be selected, copied or dragged out.
+      onCopy={(e) => e.preventDefault()}
+      onCut={(e) => e.preventDefault()}
+      onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
       aria-roledescription="carousel"
       aria-label="DUROPLY culture"
     >
       <div
         key={slide.id}
-        className="grid min-h-[340px] grid-cols-1 items-center gap-6 px-6 pb-14 pt-8 text-left transition-colors sm:px-10 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-10"
+        className="grid min-h-[100px] grid-cols-1 items-center gap-6 px-6 pb-16 pt-8 text-left transition-colors sm:px-10 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] md:gap-10"
         style={{ background: slide.bg }}
       >
         <div className="min-w-0 cc-in-left text-left">{slide.body}</div>

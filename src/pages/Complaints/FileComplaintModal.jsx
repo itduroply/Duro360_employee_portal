@@ -217,15 +217,13 @@ function OriginCards({ value, onChange }) {
   );
 }
 
-// Metres -> whole feet, so 2.44 x 1.22 reads as the trade size 8 x 4 ft.
-const toFeet = (m) => Math.round(Number(m) / 0.3048);
 const trimNumber = (n) => String(Number(n));
 
 function sizeLabel(l) {
   if (l.length_m == null || l.width_m == null) return { main: '—', sub: '' };
   return {
-    main: `${toFeet(l.length_m)} × ${toFeet(l.width_m)} ft`,
-    sub: `${trimNumber(l.length_m)} × ${trimNumber(l.width_m)} m`,
+    main: `${trimNumber(l.length_m)} × ${trimNumber(l.width_m)} m`,
+    sub: '',
   };
 }
 

@@ -6,7 +6,7 @@ import Select from '../../components/common/Select.jsx';
 import { INPUT, INPUT_OK, INPUT_ERROR, HINT_ERROR, LABEL } from '../../components/common/formStyles.js';
 import { creditApi } from './api/creditApi.js';
 import { AGEING_BUCKETS, formatWhen, rupees, toNumber, withCommas } from './lib/format.js';
-import { Req, TextArea } from './components.jsx';
+import { AttachmentPicker, Req, TextArea } from './components.jsx';
 
 const EMPTY = {
   requestType: 'Temporary',
@@ -229,6 +229,8 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
   const [errors, setErrors] = useState({});
   const [summary, setSummary] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Files stored for this request before it is sent (see uploadAttachment).
+  const [files, setFiles] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customersError, setCustomersError] = useState('');
@@ -362,7 +364,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
     setSummary('');
     setSubmitting(true);
     try {
-      const result = await creditApi.submitRequisition(payloadOf(form));
+      const result = await creditApi.submitRequisition(payloadOf(form), files);
       onSubmitted(result);
     } catch (err) {
       setSummary(err.message || 'The request could not be sent.');
@@ -505,6 +507,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
               />
             </div>
             <TextArea id="cr-remark" label={<Req>Remark</Req>} value={form.remark} onChange={(e) => set('remark', e.target.value)} error={errors.remark} placeholder="Why should this limit become permanent?" />
+            <AttachmentPicker value={files} onChange={setFiles} />
             <p className="text-theme-xs text-gray-500">
               You do not choose the approvers. A Permanent request goes through the approval levels set by the administrator, in order. It is approved only after the last level approves.
             </p>
@@ -524,6 +527,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
             <TextInput id="cr-paymentReceiveDate" type="date" label={<Req>Expected payment date</Req>} value={form.paymentReceiveDate} onChange={(e) => set('paymentReceiveDate', e.target.value)} error={errors.paymentReceiveDate} />
           </div>
           <TextArea id="cr-remark" label={<Req>Remark</Req>} value={form.remark} onChange={(e) => set('remark', e.target.value)} error={errors.remark} placeholder="Why does this dealer need the limit?" />
+          <AttachmentPicker value={files} onChange={setFiles} />
           <p className="text-theme-xs text-gray-500">You do not choose the approver. The system picks one or two approvers from the routing rules set by the administrator. Either one can decide the request.</p>
         </Group>
       )}
