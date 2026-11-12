@@ -137,7 +137,6 @@ function ReviewActions({ request, onDone }) {
 function Inbox() {
   const { data, error, loading, reload } = useList(creditApi.getApproverRequisitions, REFRESH_MS, ['credit:approvers']);
   const [selected, setSelected] = useState(null);
-  const [threadKey, setThreadKey] = useState(0);
   const [notice, setNotice] = useState('');
 
   const rows = data?.requisitions ?? [];
@@ -180,38 +179,69 @@ function Inbox() {
         empty={{ icon: 'dealers', title: loading ? 'Loading…' : 'No requests are waiting', hint: loading ? '' : 'New requests will show here.' }}
       />
 
-      <Modal open={Boolean(open)} size="lg" title={open ? open.dealerName : ''} subtitle={open ? `Request ${open.ref}` : ''} onClose={() => setSelected(null)}>
-        {open && (
-          <>
-            <RequestDetails request={open} />
-            <h4 className="mb-2.5 mt-6 text-theme-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Questions</h4>
-            <QueryThread requisitionId={open.id} reloadKey={threadKey} />
-            {open.canApprove ? (
-              <ReviewActions
-                request={open}
-                onDone={(message, action) => {
-                  // Every action closes the request. A query stays in the inbox, marked
-                  // as waiting for the requester, until they reply.
-                  setNotice(message);
-                  reload(true);
-                  setSelected(null);
-                }}
-              />
-            ) : (
-              <Alert variant="info" className="mt-6">
-                This request is assigned to {open.assignedToName}. You can read it, but only that approver can act on it.
-              </Alert>
-            )}
-          </>
-        )}
-      </Modal>
+      <RequestWindow
+        request={open}
+        onClose={() => setSelected(null)}
+        onDone={(message) => {
+          // Every action closes the request. A query stays in the inbox, marked
+          // as waiting for the requester, until they reply.
+          setNotice(message);
+          reload(true);
+          setSelected(null);
+        }}
+      />
     </div>
+  );
+}
+
+// One request, opened from the inbox or from a Pending row in the history:
+// the form, the question thread, and the actions when this approver may act.
+function RequestWindow({ request, onClose, onDone }) {
+  return (
+    <Modal open={Boolean(request)} size="lg" title={request ? request.dealerName : ''} subtitle={request ? `Request ${request.ref}` : ''} onClose={onClose}>
+      {request && (
+        <>
+          <RequestDetails request={request} />
+          <h4 className="mb-2.5 mt-6 text-theme-xs font-semibold uppercase tracking-[0.08em] text-gray-500">Questions</h4>
+          <QueryThread requisitionId={request.id} />
+          {request.canApprove ? (
+            <ReviewActions request={request} onDone={onDone} />
+          ) : (
+            <Alert variant="info" className="mt-6">
+              This request is assigned to {request.assignedToName}. You can read it, but only that approver can act on it.
+            </Alert>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }
 
 function History() {
   const { data, error, loading } = useList(creditApi.getApproverActionHistory);
-  const rows = data?.actions ?? [];
+  // Requests still waiting on this approver are listed here as Pending, so the
+  // history shows the whole picture, not only what has been decided.
+  const inbox = useList(creditApi.getApproverRequisitions, REFRESH_MS, ['credit:approvers']);
+  const [selected, setSelected] = useState(null);
+  const [notice, setNotice] = useState('');
+  const rows = useMemo(() => {
+    const pending = (inbox.data?.requisitions ?? [])
+      .filter((r) => r.canApprove)
+      .map((r) => ({
+        ...r,
+        id: `Pending-${r.id}`,
+        requisitionId: r.id,
+        action: 'Pending',
+        actionAt: r.sentAt,
+        reason: r.awaitingRequesterReply ? 'Waiting for the requester to reply' : r.requesterReplied ? 'Requester replied, waiting for your action' : 'Waiting for your action',
+      }));
+    return [...pending, ...(data?.actions ?? [])];
+  }, [data, inbox.data]);
+  // The request behind the Pending row that was clicked, with its own id back.
+  const open = useMemo(() => {
+    const request = (inbox.data?.requisitions ?? []).find((r) => r.id === selected);
+    return request ? { ...request, status: 'Pending' } : null;
+  }, [inbox.data, selected]);
   const columns = [
     { key: 'dealerName', label: 'Dealer', render: (r) => (
       <div>
@@ -228,16 +258,27 @@ function History() {
   ];
   return (
     <div>
-      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
+      {notice && <Alert variant="success" className="mb-4">{notice}</Alert>}
+      {(error || inbox.error) && <Alert variant="error" className="mb-4">{error || inbox.error}</Alert>}
       <DataTable
         title="My action history"
         rows={rows}
-        tabs={['All', 'Approved', 'Rejected']}
+        tabs={['All', 'Pending', 'Approved', 'Rejected']}
         tabField="action"
         searchPlaceholder="Search dealer"
         searchFields={['dealerName', 'dealerCode', 'requesterName']}
         columns={columns}
+        onRowClick={(r) => r.action === 'Pending' && setSelected(r.requisitionId)}
         empty={{ icon: 'dealers', title: loading ? 'Loading…' : 'You have not acted on any request yet' }}
+      />
+      <RequestWindow
+        request={open}
+        onClose={() => setSelected(null)}
+        onDone={(message) => {
+          setNotice(message);
+          inbox.reload(true);
+          setSelected(null);
+        }}
       />
     </div>
   );
