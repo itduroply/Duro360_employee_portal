@@ -142,6 +142,10 @@ export const creditApi = {
             operator: r.condition_operator,
             amount: Number(r.amount_min),
             upperAmount: r.amount_max == null ? null : Number(r.amount_max),
+            daysOperator: r.days_operator ?? '',
+            days: r.days_min == null ? '' : Number(r.days_min),
+            upperDays: r.days_max == null ? '' : Number(r.days_max),
+            join: r.amount_days_join ?? 'AND',
             approverId: r.approver_employee_id,
             secondApproverId: r.second_approver_employee_id ?? null,
             dealers: r.dealers ?? [],
@@ -181,7 +185,7 @@ export const creditApi = {
           .sort((a, b) => Number(b.kind === 'dealer') - Number(a.kind === 'dealer'))
           .map((r) => (r.kind === 'dealer'
             ? { operator: '>=', amount: '0', upperAmount: '', approverId: r.approverId, secondApproverId: r.secondApproverId || null, dealers: r.dealers.map((d) => ({ code: d.code })) }
-            : { operator: r.operator, amount: r.amount, upperAmount: r.upperAmount, approverId: r.approverId, secondApproverId: r.secondApproverId || null, dealers: [] }))
+            : { operator: r.operator, amount: r.amount, upperAmount: r.upperAmount, daysOperator: r.daysOperator || '', days: r.daysOperator ? r.days : '', upperDays: r.daysOperator === 'between' ? r.upperDays : '', join: r.join || 'AND', approverId: r.approverId, secondApproverId: r.secondApproverId || null, dealers: [] }))
         : [],
     };
     return editingId ? call('update-employee', { ...payload, employeeId: editingId }) : call('create-employee', payload);

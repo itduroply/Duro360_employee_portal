@@ -52,9 +52,15 @@ export function ruleSummary(rule) {
   if (rule.dealers?.length) return `${rule.dealers.length} specific dealer${rule.dealers.length > 1 ? 's' : ''}, any amount`;
   const op = OPERATORS.find((o) => o.value === rule.operator);
   const lower = withCommas(String(rule.amount));
-  return rule.operator === 'between'
+  const amountText = rule.operator === 'between'
     ? `Between ₹ ${lower} and ₹ ${withCommas(String(rule.upperAmount))}`
     : `${op?.label ?? rule.operator} ₹ ${lower}`;
+  if (!rule.daysOperator) return amountText;
+  const dop = OPERATORS.find((o) => o.value === rule.daysOperator);
+  const daysText = rule.daysOperator === 'between'
+    ? `between ${rule.days} and ${rule.upperDays} days`
+    : `${(dop?.label ?? rule.daysOperator).toLowerCase()} ${rule.days} days`;
+  return `${amountText} ${rule.join === 'OR' ? 'or' : 'and'} ${daysText}`;
 }
 
 export function formatDateTime(iso) {

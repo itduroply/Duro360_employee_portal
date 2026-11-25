@@ -14,7 +14,8 @@ import { Req, useList } from './components.jsx';
 
 // secondApproverId: null = one approver. '' = the second box is open, not yet picked.
 // kind 'dealer': the rule is for the listed dealers only, at any amount.
-const EMPTY_RULE = { kind: 'amount', operator: '<', amount: '', upperAmount: '', approverId: '', secondApproverId: null, dealers: [] };
+// daysOperator '' = no days test. join says how the amount and days tests combine.
+const EMPTY_RULE = { kind: 'amount', operator: '<', amount: '', upperAmount: '', daysOperator: '', days: '', upperDays: '', join: 'AND', approverId: '', secondApproverId: null, dealers: [] };
 const EMPTY_DEALER_RULE = { ...EMPTY_RULE, kind: 'dealer' };
 const EMPTY_FORM = { employeeCode: '', name: '', email: '', mobile: '', role: '', sellingBranchIds: [], rules: [{ ...EMPTY_RULE }] };
 
@@ -41,6 +42,15 @@ function validate(form, adding) {
           const upper = toNumber(rule.upperAmount);
           if (!Number.isFinite(upper)) return 'Enter the upper amount.';
           if (upper < amount) return 'The upper amount cannot be smaller than the first amount.';
+        }
+        if (rule.daysOperator) {
+          const days = toNumber(rule.days);
+          if (!Number.isInteger(days) || days < 0) return 'Enter the days as a whole number.';
+          if (rule.daysOperator === 'between') {
+            const upperDays = toNumber(rule.upperDays);
+            if (!Number.isInteger(upperDays)) return 'Enter the upper days as a whole number.';
+            if (upperDays < days) return 'The upper days cannot be smaller than the first days.';
+          }
         }
       }
       if (!rule.approverId) return 'Pick an approver.';
@@ -141,7 +151,7 @@ function DealerPicker({ dealers, value, onChange }) {
 
 function RuleRows({ rules, approvers, dealers, errors, onChange }) {
   const update = (i, patch) => onChange(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const complete = (r) => r.approverId && r.secondApproverId !== '' && (r.kind === 'dealer' ? r.dealers.length > 0 : r.amount && (r.operator !== 'between' || r.upperAmount));
+  const complete = (r) => r.approverId && r.secondApproverId !== '' && (r.kind === 'dealer' ? r.dealers.length > 0 : r.amount && (r.operator !== 'between' || r.upperAmount) && (!r.daysOperator || (r.days !== '' && (r.daysOperator !== 'between' || r.upperDays !== ''))));
   return (
     <div>
       <p className={LABEL}>
@@ -156,7 +166,7 @@ function RuleRows({ rules, approvers, dealers, errors, onChange }) {
       <div className="flex flex-col gap-3">
         {rules.map((rule, i) => (
           <div key={i} className="rounded-xl border border-gray-200 bg-white p-3">
-            <div className={`grid grid-cols-1 items-end gap-3 ${rule.kind === 'dealer' ? 'sm:grid-cols-[1.5fr_1fr_auto]' : 'sm:grid-cols-[1.3fr_1fr_1fr_1.3fr_auto]'}`}>
+            <div className={rule.kind === 'dealer' ? 'grid grid-cols-1 items-end gap-3 sm:grid-cols-[1.5fr_1fr_auto]' : 'flex flex-wrap items-end gap-2'}>
               {rule.kind === 'dealer' && (
                 <div>
                   <p className={LABEL}>Dealers <span className="font-normal text-gray-500">· any amount</span></p>
@@ -165,24 +175,49 @@ function RuleRows({ rules, approvers, dealers, errors, onChange }) {
               )}
               {rule.kind !== 'dealer' && (
                 <>
-                  <Select aria-label="Condition" value={rule.operator} onChange={(e) => update(i, { operator: e.target.value })}>
+                  <Select wrapperClassName="w-44" aria-label="Condition" value={rule.operator} onChange={(e) => update(i, { operator: e.target.value })}>
                     {OPERATORS.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </Select>
-                  <div className="[&>div]:!mb-0">
+                  <div className="w-36 [&>div]:!mb-0">
                     <TextInput aria-label="Amount" placeholder="Amount" inputMode="decimal" icon="₹" value={withCommas(rule.amount)} onChange={(e) => update(i, { amount: e.target.value.replace(/[^\d.]/g, '') })} />
                   </div>
-                  {rule.operator === 'between' ? (
-                    <div className="[&>div]:!mb-0">
+                  {rule.operator === 'between' && (
+                    <div className="w-36 [&>div]:!mb-0">
                       <TextInput aria-label="Upper amount" placeholder="To amount" inputMode="decimal" icon="₹" value={withCommas(rule.upperAmount)} onChange={(e) => update(i, { upperAmount: e.target.value.replace(/[^\d.]/g, '') })} />
                     </div>
-                  ) : (
-                    <span className="hidden sm:block" />
+                  )}
+                  {rule.daysOperator !== '' && (
+                    <Select wrapperClassName="w-24" aria-label="Join amount and days" title="AND: amount and days both match. OR: either one matches." value={rule.join} onChange={(e) => update(i, { join: e.target.value })}>
+                      <option value="AND">AND</option>
+                      <option value="OR">OR</option>
+                    </Select>
+                  )}
+                  <Select
+                    wrapperClassName="w-44"
+                    aria-label="Assigned days condition"
+                    value={rule.daysOperator}
+                    onChange={(e) => update(i, e.target.value === '' ? { daysOperator: '', days: '', upperDays: '', join: 'AND' } : { daysOperator: e.target.value })}
+                  >
+                    <option value="">Any days</option>
+                    {OPERATORS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
+                  {rule.daysOperator !== '' && (
+                    <div className="w-24 [&>div]:!mb-0">
+                      <TextInput aria-label="Assigned days" placeholder="Days" inputMode="numeric" value={rule.days} onChange={(e) => update(i, { days: e.target.value.replace(/\D/g, '') })} />
+                    </div>
+                  )}
+                  {rule.daysOperator === 'between' && (
+                    <div className="w-24 [&>div]:!mb-0">
+                      <TextInput aria-label="Upper days" placeholder="To days" inputMode="numeric" value={rule.upperDays} onChange={(e) => update(i, { upperDays: e.target.value.replace(/\D/g, '') })} />
+                    </div>
                   )}
                 </>
               )}
-              <Select aria-label="Approver" value={rule.approverId} onChange={(e) => update(i, { approverId: e.target.value })}>
+              <Select wrapperClassName={rule.kind === 'dealer' ? undefined : 'w-48'} aria-label="Approver" value={rule.approverId} onChange={(e) => update(i, { approverId: e.target.value })}>
                 <option value="">Pick approver</option>
                 {approvers.map((a) => (
                   <option key={a.id} value={a.id} disabled={String(a.id) === String(rule.secondApproverId)}>{a.name}</option>
@@ -208,8 +243,8 @@ function RuleRows({ rules, approvers, dealers, errors, onChange }) {
                 + Add second approver
               </button>
             ) : (
-              <div className={`mt-3 grid grid-cols-1 items-end gap-3 ${rule.kind === 'dealer' ? 'sm:grid-cols-[1.5fr_1fr_auto]' : 'sm:grid-cols-[1.3fr_1fr_1fr_1.3fr_auto]'}`}>
-                <Select wrapperClassName={rule.kind === 'dealer' ? 'sm:col-start-2' : 'sm:col-start-4'} aria-label="Second approver" value={rule.secondApproverId} onChange={(e) => update(i, { secondApproverId: e.target.value })}>
+              <div className={rule.kind === 'dealer' ? 'mt-3 grid grid-cols-1 items-end gap-3 sm:grid-cols-[1.5fr_1fr_auto]' : 'mt-2 flex flex-wrap items-end gap-2'}>
+                <Select wrapperClassName={rule.kind === 'dealer' ? 'sm:col-start-2' : 'w-48'} aria-label="Second approver" value={rule.secondApproverId} onChange={(e) => update(i, { secondApproverId: e.target.value })}>
                   <option value="">Pick second approver</option>
                   {approvers.map((a) => (
                     <option key={a.id} value={a.id} disabled={String(a.id) === String(rule.approverId)}>{a.name}</option>
@@ -449,7 +484,7 @@ function UserForm({ editing, masters, fixedRole, onDone, onCancel }) {
           employeeCode: editing.code, name: editing.name, email: editing.email, mobile: editing.mobile || '', role: editing.role,
           sellingBranchIds: editing.sellingBranchIds.map(String),
           rules: editing.rules.length
-            ? editing.rules.map((r) => ({ kind: r.dealers?.length ? 'dealer' : 'amount', dealers: r.dealers ?? [], operator: r.operator, amount: String(r.amount), upperAmount: r.upperAmount == null ? '' : String(r.upperAmount), approverId: String(r.approverId), secondApproverId: r.secondApproverId ? String(r.secondApproverId) : null }))
+            ? editing.rules.map((r) => ({ kind: r.dealers?.length ? 'dealer' : 'amount', dealers: r.dealers ?? [], operator: r.operator, amount: String(r.amount), upperAmount: r.upperAmount == null ? '' : String(r.upperAmount), daysOperator: r.daysOperator ?? '', days: r.days === '' || r.days == null ? '' : String(r.days), upperDays: r.upperDays === '' || r.upperDays == null ? '' : String(r.upperDays), join: r.join ?? 'AND', approverId: String(r.approverId), secondApproverId: r.secondApproverId ? String(r.secondApproverId) : null }))
             : [{ ...EMPTY_RULE }],
         }
       : { ...EMPTY_FORM, role: fixedRole }

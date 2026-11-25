@@ -15,8 +15,6 @@ const withCommas = (value) => {
 
 const stripCommas = (value) => String(value ?? '').replace(/[^\d.]/g, '');
 
-// Super Admin only: the amount bands that pick the manager level, and the
-// accounts team. Saved as a whole; a filed complaint keeps the band it got.
 export default function ComplaintApprovalSettings() {
   const [bands, setBands] = useState([]);
   const [members, setMembers] = useState([]);
