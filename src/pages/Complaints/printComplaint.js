@@ -189,7 +189,8 @@ export async function downloadComplaint(c) {
     ['Invoice Copy', c.invoiceFileName],
     ['Site Photographs', c.photoNames?.length ? c.photoNames.join(', ') : '—'],
     ['Additional Documents', c.extraNames?.length ? c.extraNames.join(', ') : '—'],
-    ['Installation Context', c.installation],
+    // The filing form no longer asks for this. Print it only on older complaints that have it.
+    ...(c.installation ? [['Installation Context', c.installation]] : []),
     ['Dealer / Customer Remarks', c.remarks],
   ]);
 

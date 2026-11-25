@@ -385,7 +385,8 @@ export function ComplaintDetails({ complaint, onChanged }) {
 
       <Section title="Details">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Item label="Installation" value={complaint.installation_context} />
+          {/* The filing form no longer asks for this. Show it only on older complaints that have it. */}
+          {complaint.installation_context && <Item label="Installation" value={complaint.installation_context} />}
           <Item label="Remarks" value={complaint.remarks} />
         </div>
       </Section>
