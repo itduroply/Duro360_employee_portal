@@ -8,8 +8,23 @@ import { supabase } from '../lib/supabaseClient';
 // service role key instead). supabase.functions.invoke automatically sends
 // the caller's current session as the Authorization header, which is what
 // that function checks the SUPERADMIN role against.
+//
+// A 401 ("Invalid or expired session.") usually means the login token ran out
+// while the tab sat in the background (browsers slow down timers there, so the
+// automatic refresh can be late). Refresh the session and send the call once
+// more. Only if that also fails is the login really over: sign out so the app
+// returns to the login page.
 async function invoke(action, payload = {}) {
-  const { data, error } = await supabase.functions.invoke('manage-users', { body: { action, payload } });
+  const send = () => supabase.functions.invoke('manage-users', { body: { action, payload } });
+  let { data, error } = await send();
+  if (error?.context?.status === 401) {
+    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshed?.session) ({ data, error } = await send());
+    if (error?.context?.status === 401) {
+      await supabase.auth.signOut();
+      throw new Error('Your session has expired. Please log in again.');
+    }
+  }
   if (error) {
     let message = error.message;
     const status = error.context?.status;

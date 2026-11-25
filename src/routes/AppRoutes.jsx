@@ -30,6 +30,11 @@ const CertificatePrintPage = lazy(() => import('../pages/Warranty/CertificatePri
 // const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage.jsx'));
 const QueriesPage = lazy(() => import('../pages/Queries/QueriesPage.jsx'));
 const ComplaintsPage = lazy(() => import('../pages/Complaints/ComplaintsPage.jsx'));
+const FileComplaintPage = lazy(() => import('../pages/Complaints/FileComplaintPage.jsx'));
+const ComplaintHistoryPage = lazy(() => import('../pages/Complaints/ComplaintHistoryPage.jsx'));
+const ComplaintApprovalsPage = lazy(() => import('../pages/Complaints/ComplaintApprovalsPage.jsx'));
+const ComplaintSettingsPage = lazy(() => import('../pages/Complaints/ComplaintSettingsPage.jsx'));
+const ComplaintAccessPage = lazy(() => import('../pages/Complaints/ComplaintAccessPage.jsx'));
 const NotificationsPage = lazy(() => import('../pages/Notifications/NotificationsPage.jsx'));
 const ReportsPage = lazy(() => import('../pages/Reports/ReportsPage.jsx'));
 const AuditLogsPage = lazy(() => import('../pages/AuditLogs/AuditLogsPage.jsx'));
@@ -49,7 +54,14 @@ function moduleRoutes() {
     <Route key="warranty" path="warranty" element={<WarrantyPage />} />,
     // <Route key="documents" path="documents" element={<DocumentsPage />} />,
     <Route key="queries" path="queries" element={<QueriesPage />} />,
+    // Complaints has one page per submenu item; "complaints" alone opens the
+    // first page this person may use.
     <Route key="complaints" path="complaints" element={<ComplaintsPage />} />,
+    <Route key="complaints-new" path="complaints/new" element={<FileComplaintPage />} />,
+    <Route key="complaints-history" path="complaints/history" element={<ComplaintHistoryPage />} />,
+    <Route key="complaints-approvals" path="complaints/approvals" element={<ComplaintApprovalsPage />} />,
+    <Route key="complaints-settings" path="complaints/settings" element={<ComplaintSettingsPage />} />,
+    <Route key="complaints-access" path="complaints/access" element={<ComplaintAccessPage />} />,
     <Route key="notifications" path="notifications" element={<NotificationsPage />} />,
     <Route key="reports" path="reports" element={<ReportsPage />} />,
     <Route key="audit-logs" path="audit-logs" element={<AuditLogsPage />} />,

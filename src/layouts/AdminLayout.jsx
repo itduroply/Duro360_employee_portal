@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import axiosClient from '../api/axiosClient';
 import ConsoleLayout from './ConsoleLayout.jsx';
-import { getSidebarForRole } from '../components/Sidebar/sidebarConfig.js';
+import { complaintRights, getSidebarForRole, withComplaintPages } from '../components/Sidebar/sidebarConfig.js';
+import useComplaintAccess from '../pages/Complaints/useComplaintAccess.js';
 
 /**
  * Admin Console -- role-gated on the frontend (UX only) AND, for every API
@@ -19,6 +20,10 @@ import { getSidebarForRole } from '../components/Sidebar/sidebarConfig.js';
 export default function AdminLayout() {
   const { user } = useAuth();
   const [simulatorEnabled, setSimulatorEnabled] = useState(true);
+  // A manager or accounts member with complaints to approve sees Complaints
+  // even without the permission; the submenu then only holds My Approvals.
+  const { access: complaintAccess, refresh: refreshComplaintAccess } = useComplaintAccess();
+  const complaintApprover = Boolean(complaintAccess?.isAccounts || complaintAccess?.pending > 0 || complaintAccess?.hasHistory);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,14 +42,21 @@ export default function AdminLayout() {
     };
   }, []);
 
-  const navItems = getSidebarForRole('ADMIN', { permissions: user?.permissions, simulatorEnabled });
+  const permissions = complaintApprover && !(user?.permissions ?? []).includes('complaints')
+    ? [...(user?.permissions ?? []), 'complaints']
+    : user?.permissions;
+  const rights = complaintRights({
+    access: complaintAccess,
+    fallbackCanFile: (user?.permissions ?? []).includes('complaints'),
+  });
+  const navItems = withComplaintPages(getSidebarForRole('ADMIN', { permissions, simulatorEnabled }), rights);
 
   return (
     <ConsoleLayout
       consoleLabel="ADMIN CONSOLE"
       basePath="/admin"
       navItems={navItems}
-      outletContext={{ simulatorEnabled }}
+      outletContext={{ simulatorEnabled, complaintAccess, complaintRights: rights, refreshComplaintAccess }}
     />
   );
 }

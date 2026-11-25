@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import duroplyLogo from '../../assets/duroply-logo.png';
 import duroplyLogoBrown from '../../assets/duroply-logo-brown.png';
 import { NAV_ICONS } from './navIcons.jsx';
@@ -9,6 +10,84 @@ import { SilkWaves } from '../Decor/Decor.jsx';
 // cream in the woodland theme, plain white in the TailAdmin theme. The
 // woodland theme (`theme.decor`) also centres the logo with the product line
 // under it, drops the "Menu" heading, and draws silk-like waves at the foot.
+
+function ChevronIcon({ open }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden="true">
+      <path d="M5 7.5l5 5 5-5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// A menu item with a submenu, such as Complaints. It opens by itself while
+// one of its pages is shown. Collapsed to icons, it links to its first page.
+function NavGroup({ item, Icon, basePath, showText, onNavigate }) {
+  const { pathname } = useLocation();
+  const groupPath = `${basePath}/${item.path}`;
+  const isInside = pathname === groupPath || pathname.startsWith(`${groupPath}/`);
+  const [open, setOpen] = useState(isInside);
+  const waiting = item.children.reduce((n, child) => n + (child.count || 0), 0);
+
+  useEffect(() => {
+    if (isInside) setOpen(true);
+  }, [isInside]);
+
+  const rowClass = `group relative flex w-full items-center rounded-lg px-3 transition-colors ${
+    theme.decor ? 'gap-[18px] px-5 py-3 text-[14.5px]' : 'gap-3 py-2 text-theme-sm font-medium'
+  } ${showText ? '' : 'lg:justify-center'} ${
+    isInside ? `text-sidebar-active-text ${showText ? '' : `bg-sidebar-active ${theme.ui.sidebarNavActive}`}` : 'text-sidebar-text hover:bg-sidebar-hover hover:text-sidebar-hover-text'
+  }`;
+  const iconClass = isInside ? 'text-sidebar-active-text' : 'text-sidebar-icon group-hover:text-sidebar-hover-text';
+
+  if (!showText) {
+    return (
+      <li>
+        <NavLink to={`${basePath}/${item.children[0].path}`} onClick={onNavigate} title={item.label} className={rowClass}>
+          {Icon && <span className={iconClass}><Icon /></span>}
+          {waiting > 0 && <span className="absolute right-2 top-1.5 h-2 w-2 rounded-full bg-brand-500" aria-hidden="true" />}
+        </NavLink>
+      </li>
+    );
+  }
+
+  return (
+    <li>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className={rowClass}>
+        {Icon && <span className={iconClass}><Icon /></span>}
+        <span className={`flex-1 truncate text-left ${isInside ? 'font-semibold' : ''}`}>{item.label}</span>
+        {!open && waiting > 0 && (
+          <span className="rounded-full bg-brand-500 px-2 py-0.5 text-[11px] font-semibold leading-4 text-white">{waiting}</span>
+        )}
+        <ChevronIcon open={open} />
+      </button>
+      <div className={`grid transition-[grid-template-rows] duration-300 ease-out ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+        <ul className={`overflow-hidden ${theme.decor ? 'ml-[30px]' : 'ml-[22px]'} border-l border-sidebar-divider`}>
+          {item.children.map((child, i) => (
+            <li key={child.key} className={i === 0 ? 'pt-1' : ''}>
+              <NavLink
+                to={`${basePath}/${child.path}`}
+                onClick={onNavigate}
+                tabIndex={open ? undefined : -1}
+                className={({ isActive }) =>
+                  `relative -ml-px flex items-center gap-2 border-l-2 py-2 pl-4 pr-3 text-[13.5px] transition-colors ${
+                    isActive
+                      ? 'border-brand-500 font-semibold text-sidebar-active-text'
+                      : 'border-transparent text-sidebar-text hover:border-sidebar-divider hover:text-sidebar-hover-text'
+                  }`
+                }
+              >
+                <span className="flex-1 truncate">{child.label}</span>
+                {child.count > 0 && (
+                  <span className="rounded-full bg-brand-500 px-2 py-0.5 text-[11px] font-semibold leading-4 text-white">{child.count}</span>
+                )}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </li>
+  );
+}
 
 export default function Sidebar({ consoleLabel, basePath, navItems: allNavItems, isCollapsed, isOpen, onClose }) {
   const showText = !isCollapsed || isOpen;
@@ -64,6 +143,11 @@ export default function Sidebar({ consoleLabel, basePath, navItems: allNavItems,
           <ul className={`mb-6 flex flex-col ${theme.decor ? 'gap-1.5' : 'gap-1'}`}>
             {navItems.map((item) => {
               const Icon = NAV_ICONS[item.key];
+              if (item.children?.length) {
+                return (
+                  <NavGroup key={item.key} item={item} Icon={Icon} basePath={basePath} showText={showText} onNavigate={onClose} />
+                );
+              }
               return (
                 <li key={item.key}>
                   <NavLink

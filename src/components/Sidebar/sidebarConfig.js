@@ -58,3 +58,31 @@ export function getSidebarForRole(role, { permissions = [], simulatorEnabled = t
 
   return items.filter((item) => item.key !== 'simulator' || simulatorEnabled);
 }
+
+// The Complaints submenu. `need` says who sees each page: `file` for people
+// who may file complaints, `approve` for approvers, `superadmin` for the
+// Super Admin only. withComplaintPages() picks the pages for one person.
+export const COMPLAINT_PAGES = [
+  { key: 'complaintsNew', iconKey: 'complaints', label: 'Register Complaint', path: 'complaints/new', implemented: true, need: 'file' },
+  { key: 'complaintsHistory', iconKey: 'complaints', label: 'Complaint History', path: 'complaints/history', implemented: true, need: 'file' },
+  { key: 'complaintsApprovals', iconKey: 'complaints', label: 'My Approvals', path: 'complaints/approvals', implemented: true, need: 'approve' },
+  { key: 'complaintsSettings', iconKey: 'complaints', label: 'Approval Settings', path: 'complaints/settings', implemented: true, need: 'superadmin' },
+  { key: 'complaintsAccess', iconKey: 'complaints', label: 'Assign Users', path: 'complaints/access', implemented: true, need: 'superadmin' },
+];
+
+// What one person may do in Complaints, from my_complaint_access(). While
+// that is still loading, `fallbackCanFile` (the complaints permission) is used.
+export function complaintRights({ isSuperAdmin = false, access = null, fallbackCanFile = false } = {}) {
+  const canFile = isSuperAdmin || (access ? Boolean(access.canFile) : fallbackCanFile);
+  const canApprove = isSuperAdmin || Boolean(access && (access.isAccounts || access.pending > 0 || access.hasHistory));
+  return { canFile, canApprove, isSuperAdmin, pending: access?.pending ?? 0 };
+}
+
+// Gives the Complaints item its submenu. My Approvals carries the count of
+// complaints waiting on this person.
+export function withComplaintPages(navItems, rights) {
+  const children = COMPLAINT_PAGES.filter((page) =>
+    page.need === 'file' ? rights.canFile : page.need === 'approve' ? rights.canApprove : rights.isSuperAdmin
+  ).map((page) => (page.key === 'complaintsApprovals' && rights.pending > 0 ? { ...page, count: rights.pending } : page));
+  return navItems.map((item) => (item.key === 'complaints' ? { ...item, children } : item));
+}

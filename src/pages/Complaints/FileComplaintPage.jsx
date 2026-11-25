@@ -1,23 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Modal from '../../components/common/Modal.jsx';
+import { useNavigate } from 'react-router-dom';
+import ModulePage from '../../components/ModulePage/ModulePage.jsx';
 import Button from '../../components/common/Button.jsx';
 import TextInput from '../../components/common/TextInput.jsx';
 import Select from '../../components/common/Select.jsx';
 import Alert from '../../components/common/Alert.jsx';
+import Modal from '../../components/common/Modal.jsx';
 import { CloseIcon } from '../../components/common/icons.jsx';
-import { NAV_ICONS } from '../../components/Sidebar/navIcons.jsx';
 import { HINT_ERROR, INPUT, INPUT_ERROR, INPUT_OK, LABEL } from '../../components/common/formStyles.js';
 import { complaintsApi } from '../../api/complaintsApi';
 import { formatDate } from '../../utils/format.js';
+import ComplaintGate from './ComplaintGate.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { downloadComplaint } from './printComplaint.js';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // matches the complaint-docs bucket limit
 const EMPTY_FORM = {
   origin: 'DEALER', sellingBranch: '', dealerCode: '', customerName: '', customerMobile: '', invoiceNo: '',
-  amount: '', installationContext: '', remarks: '',
+  amount: '', installationContext: '', remarks: '', physicalVisit: 'NO', visitDate: '',
 };
 
+// Today's date in India as YYYY-MM-DD. This is the complaint date.
+const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+// A nature of "Other" is saved as "Other: <reason>".
+export const OTHER = 'Other';
+export const natureText = (nature, other) => (nature === OTHER ? `${OTHER}: ${String(other ?? '').trim()}` : nature || '');
+
 // Nature of complaint, picked per product line (primary is required, secondary optional).
-const NATURES = [
+export const NATURES = [
   'Delamination',
   'Borer / Termite Attack',
   'Moisture Absorption / Swelling',
@@ -77,12 +88,31 @@ function Svg({ children, className = 'h-4 w-4' }) {
   );
 }
 
-function SectionTitle({ icon, children }) {
+const CHECK = <path d="M5 12.5l4.5 4.5L19 7.5" />;
+
+// One step of the form, as its own card. The badge turns green once the
+// step's required fields are filled.
+function Section({ id, step, icon, title, hint, done, children }) {
   return (
-    <h4 className="mb-4 mt-8 flex items-center gap-2 text-theme-xs font-semibold uppercase tracking-wider text-gray-500 first:mt-0">
-      <Svg>{icon}</Svg>
-      {children}
-    </h4>
+    <section id={id} className="scroll-mt-28 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-theme-sm">
+      <header className="flex items-center gap-3 border-b border-gray-100 bg-gray-50/60 px-4 py-3 sm:px-5">
+        <span
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+            done ? 'bg-success-500 text-white' : 'bg-brand-50 text-brand-500'
+          }`}
+        >
+          <Svg className="h-4 w-4">{done ? CHECK : icon}</Svg>
+        </span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3">
+          <h3 className="text-theme-sm font-semibold text-gray-800">
+            <span className="mr-1.5 text-gray-400">{step}</span>
+            {title}
+          </h3>
+          {hint && <p className="hidden text-theme-xs text-gray-500 sm:block">{hint}</p>}
+        </div>
+      </header>
+      <div className="p-4 sm:p-5">{children}</div>
+    </section>
   );
 }
 
@@ -105,7 +135,7 @@ function fileSize(bytes) {
 
 // A dashed drop zone. Shows the chosen files below it, each with a remove
 // button. `multiple` zones keep adding files; single zones replace.
-function FileDrop({ id, label, title, hint, accept, multiple = false, files, onChange, error, onReject }) {
+export function FileDrop({ id, label, title, hint, accept, multiple = false, files, onChange, error, onReject }) {
   const inputRef = useRef(null);
   const [isOver, setIsOver] = useState(false);
 
@@ -120,7 +150,7 @@ function FileDrop({ id, label, title, hint, accept, multiple = false, files, onC
   }
 
   return (
-    <div className="mb-5">
+    <div>
       <p className={LABEL} id={`${id}-label`}>
         {label}
       </p>
@@ -139,12 +169,12 @@ function FileDrop({ id, label, title, hint, accept, multiple = false, files, onC
           setIsOver(false);
           take(e.dataTransfer.files);
         }}
-        className={`flex w-full items-center gap-4 rounded-2xl border-2 border-dashed px-4 py-4 text-left transition-colors focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
+        className={`flex w-full items-center gap-3 rounded-xl border-2 border-dashed px-3.5 py-3 text-left transition-colors focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
           error ? 'border-error-300 bg-error-50/40' : isOver ? 'border-brand-400 bg-brand-50' : 'border-brand-200 bg-brand-25 hover:border-brand-300 hover:bg-brand-50'
         }`}
       >
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-brand-500 shadow-theme-xs">
-          <Svg className="h-5 w-5">{SECTION_ICONS.evidence}</Svg>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-brand-500 shadow-theme-xs">
+          <Svg className="h-4 w-4">{SECTION_ICONS.evidence}</Svg>
         </span>
         <span className="min-w-0">
           <span className="block text-theme-sm font-semibold text-gray-700">{title}</span>
@@ -168,7 +198,7 @@ function FileDrop({ id, label, title, hint, accept, multiple = false, files, onC
           {files.map((f, i) => (
             <li key={`${f.name}-${i}`} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2">
               <span className="min-w-0 flex-1 truncate text-theme-sm text-gray-700">{f.name}</span>
-              <span className="shrink-0 text-theme-xs text-gray-400">{fileSize(f.size)}</span>
+              {f.size != null && <span className="shrink-0 text-theme-xs text-gray-400">{fileSize(f.size)}</span>}
               <button
                 type="button"
                 onClick={() => onChange(files.filter((_, j) => j !== i))}
@@ -188,36 +218,37 @@ function FileDrop({ id, label, title, hint, accept, multiple = false, files, onC
 }
 
 function OriginCards({ value, onChange }) {
+  const current = ORIGINS.find((o) => o.value === value);
   return (
-    <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Origination">
-      {ORIGINS.map((o) => {
-        const active = value === o.value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(o.value)}
-            className={`flex items-start gap-3.5 rounded-2xl border p-4 text-left transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
-              active ? 'border-brand-500 bg-brand-50 shadow-theme-xs ring-1 ring-brand-500/30' : 'border-gray-200 bg-white hover:border-brand-200 hover:bg-brand-25'
-            }`}
-          >
-            <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500'}`}>
-              <Svg className="h-5 w-5">{o.icon}</Svg>
-            </span>
-            <span className="min-w-0">
-              <span className="block text-theme-sm font-semibold text-gray-800">{o.title}</span>
-              <span className="mt-0.5 block text-theme-xs leading-relaxed text-gray-500">{o.hint}</span>
-            </span>
-          </button>
-        );
-      })}
+    <div>
+      <p className={LABEL}>Origination</p>
+      <div className="grid w-full max-w-xs grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1" role="radiogroup" aria-label="Origination">
+        {ORIGINS.map((o) => {
+          const active = value === o.value;
+          return (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(o.value)}
+              className={`flex h-9 items-center justify-center gap-2 rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
+                active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Svg className="h-4 w-4">{o.icon}</Svg>
+              {o.title}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-theme-xs text-gray-500">{current?.hint}</p>
     </div>
   );
 }
 
 const trimNumber = (n) => String(Number(n));
+
 
 function sizeLabel(l) {
   if (l.length_m == null || l.width_m == null) return { main: '—', sub: '' };
@@ -229,9 +260,9 @@ function sizeLabel(l) {
 
 function InfoCard({ label, value }) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
-      <p className="text-theme-xs font-semibold uppercase tracking-wider text-gray-400">{label}</p>
-      <p className="mt-1 truncate text-theme-sm font-semibold text-gray-800">{value || '—'}</p>
+    <div className="rounded-xl border border-gray-100 bg-gray-50 px-3.5 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <p className="break-words text-theme-sm font-semibold text-gray-800" title={value || undefined}>{value || '—'}</p>
     </div>
   );
 }
@@ -241,8 +272,8 @@ function InfoCard({ label, value }) {
 function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, lineErrors }) {
   if (!invoiceNo) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-gray-200 px-4 py-8 text-center text-theme-sm text-gray-500">
-        <Svg className="h-6 w-6 text-gray-400">
+      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center text-theme-sm text-gray-500">
+        <Svg className="h-5 w-5 text-gray-400">
           <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM4 7.5l8 4.5 8-4.5M12 12v9" />
         </Svg>
         Select an invoice above to pull in its product lines.
@@ -267,7 +298,7 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
     </>
   );
   return (
-    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5 text-theme-xs text-gray-500">
         <span className="font-medium text-gray-700">Product lines on {invoiceNo}</span>
         <span>{involved} of {lines.length} with defects</span>
@@ -290,6 +321,7 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
               const size = sizeLabel(l);
               const d = defects[l.line_key] || {};
               const on = Number(d.qty) > 0;
+              const overSupplied = l.quantity != null && Number(d.qty) > Number(l.quantity);
               const err = lineErrors?.[l.line_key] || {};
               return (
                 <tr key={l.line_key} className={on ? 'bg-brand-25' : ''}>
@@ -303,22 +335,26 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
                     {size.sub && <span className="block text-theme-xs text-gray-400">{size.sub}</span>}
                   </td>
                   <td className={`${cell} whitespace-nowrap font-medium text-gray-800`}>
-                    {l.quantity != null ? `${Number(l.quantity).toLocaleString('en-IN')} ${l.uom_code || ''}`.trim() : '—'}
+                    {l.quantity != null ? Number(l.quantity).toLocaleString('en-IN') : '—'}
                   </td>
                   <td className={`${cell} w-28`}>
                     <input
                       type="number"
                       min="0"
-                      max={l.quantity ?? undefined}
+                      max={l.quantity != null ? Math.floor(Number(l.quantity)) : undefined}
                       step="1"
                       inputMode="numeric"
                       placeholder="0"
                       value={d.qty ?? ''}
                       onChange={(e) => onChange(l.line_key, { qty: e.target.value })}
                       aria-label={`Defective quantity for ${l.item_name}`}
-                      className={`${INPUT} ${err.qty ? INPUT_ERROR : INPUT_OK}`}
+                      className={`${INPUT} ${err.qty || overSupplied ? INPUT_ERROR : INPUT_OK}`}
                     />
-                    {err.qty && <p className={HINT_ERROR}>{err.qty}</p>}
+                    {overSupplied ? (
+                      <p className={HINT_ERROR}>Defective qty cannot be more than Qty Supplied ({Number(l.quantity).toLocaleString('en-IN')}).</p>
+                    ) : (
+                      err.qty && <p className={HINT_ERROR}>{err.qty}</p>
+                    )}
                   </td>
                   <td className={`${cell} w-56`}>
                     <Select
@@ -330,6 +366,19 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
                       {natureOptions}
                     </Select>
                     {err.primary && <p className={HINT_ERROR}>{err.primary}</p>}
+                    {d.primary === OTHER && (
+                      <>
+                        <textarea
+                          rows={2}
+                          placeholder="Write the other reason"
+                          value={d.primaryOther ?? ''}
+                          onChange={(e) => onChange(l.line_key, { primaryOther: e.target.value })}
+                          aria-label={`Other primary reason for ${l.item_name}`}
+                          className={`${INPUT} ${err.primaryOther ? INPUT_ERROR : INPUT_OK} mt-2 h-auto min-h-16 resize-y py-2`}
+                        />
+                        {err.primaryOther && <p className={HINT_ERROR}>{err.primaryOther}</p>}
+                      </>
+                    )}
                   </td>
                   <td className={`${cell} w-56 pr-4`}>
                     <Select
@@ -339,6 +388,19 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
                     >
                       {natureOptions}
                     </Select>
+                    {d.secondary === OTHER && (
+                      <>
+                        <textarea
+                          rows={2}
+                          placeholder="Write the other reason"
+                          value={d.secondaryOther ?? ''}
+                          onChange={(e) => onChange(l.line_key, { secondaryOther: e.target.value })}
+                          aria-label={`Other secondary reason for ${l.item_name}`}
+                          className={`${INPUT} ${err.secondaryOther ? INPUT_ERROR : INPUT_OK} mt-2 h-auto min-h-16 resize-y py-2`}
+                        />
+                        {err.secondaryOther && <p className={HINT_ERROR}>{err.secondaryOther}</p>}
+                      </>
+                    )}
                   </td>
                 </tr>
               );
@@ -353,8 +415,26 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
   );
 }
 
-// "File Complaint" form. Closes through `onFiled(complaintNo)` once saved.
-export default function FileComplaintModal({ open, onClose, onFiled }) {
+// "File Complaint" page. Once saved, it opens Complaint History with the new
+// complaint number shown at the top.
+function FileComplaintForm({ onReset }) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const toHistory = (state) => navigate('../history', { relative: 'path', state });
+  const [done, setDone] = useState(null); // set once the complaint is saved: drives the success dialog
+  const [downloadError, setDownloadError] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  async function download() {
+    setDownloading(true);
+    setDownloadError('');
+    try {
+      await downloadComplaint(done);
+    } catch {
+      setDownloadError('Could not create the PDF. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  }
   const [form, setForm] = useState(EMPTY_FORM);
   const [invoiceFile, setInvoiceFile] = useState([]);
   const [photos, setPhotos] = useState([]);
@@ -378,10 +458,23 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     setErrors((e) => ({ ...e, [key]: undefined }));
   };
 
-  // Fresh form each time it opens; selling branches load once per opening.
-  // A person tied to one branch gets it picked for them.
+  // Switching between Dealer and End-Customer starts the form over: the dealer,
+  // invoice, product lines, amount, files and notes are cleared. Only the
+  // default selling branch (the first tagged one) is kept.
+  function changeOrigin(next) {
+    if (next === form.origin) return;
+    setForm({ ...EMPTY_FORM, origin: next, sellingBranch: branches[0]?.name ?? '' });
+    setInvoiceFile([]);
+    setPhotos([]);
+    setExtras([]);
+    setErrors({});
+    setSubmitError('');
+  }
+
+  // The selling branches come from Assign Users: the database returns only the
+  // branches this person is tagged with (every branch if none are tagged). The
+  // first one is picked by default, and the dealers follow the picked branch.
   useEffect(() => {
-    if (!open) return undefined;
     let cancelled = false;
     setForm(EMPTY_FORM);
     setInvoiceFile([]);
@@ -400,13 +493,13 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         if (cancelled) return;
         setBranches(rows);
         setBranchesState({ loading: false, error: '' });
-        if (rows.length === 1) setForm((f) => ({ ...f, sellingBranch: rows[0].name }));
+        if (rows.length > 0) setForm((f) => ({ ...f, sellingBranch: rows[0].name }));
       })
       .catch((err) => !cancelled && setBranchesState({ loading: false, error: err.message || 'Could not load selling branches.' }));
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, []);
 
   // Dealers follow the selling branch.
   useEffect(() => {
@@ -424,32 +517,36 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     };
   }, [form.sellingBranch]);
 
+  const dealerCode = form.dealerCode;
+  const sellingBranch = form.sellingBranch;
+  const dealer = useMemo(() => dealers.find((d) => d.customer_code === dealerCode), [dealers, dealerCode]);
+
   // Invoices follow the dealer.
   useEffect(() => {
     setInvoices([]);
     setLines([]);
     setDefects({});
-    if (!form.dealerCode) return undefined;
+    if (!dealerCode) return undefined;
     let cancelled = false;
     setInvoicesState({ loading: true, error: '' });
     complaintsApi
-      .invoices(form.dealerCode)
+      .invoices(dealerCode)
       .then((rows) => !cancelled && (setInvoices(rows), setInvoicesState({ loading: false, error: '' })))
       .catch((err) => !cancelled && setInvoicesState({ loading: false, error: err.message || 'Could not load invoices.' }));
     return () => {
       cancelled = true;
     };
-  }, [form.dealerCode]);
+  }, [dealerCode]);
 
   // Product lines follow the invoice; all start ticked.
   useEffect(() => {
     setLines([]);
     setDefects({});
-    if (!form.dealerCode || !form.invoiceNo) return undefined;
+    if (!dealerCode || !form.invoiceNo) return undefined;
     let cancelled = false;
     setLinesState({ loading: true, error: '' });
     complaintsApi
-      .invoiceLines(form.dealerCode, form.invoiceNo)
+      .invoiceLines(dealerCode, form.invoiceNo)
       .then((rows) => {
         if (cancelled) return;
         setLines(rows);
@@ -459,12 +556,13 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     return () => {
       cancelled = true;
     };
-  }, [form.dealerCode, form.invoiceNo]);
+  }, [dealerCode, form.invoiceNo]);
 
-  const dealer = useMemo(() => dealers.find((d) => d.customer_code === form.dealerCode), [dealers, form.dealerCode]);
   const invoice = useMemo(() => invoices.find((i) => i.document_number === form.invoiceNo), [invoices, form.invoiceNo]);
-  const branch = useMemo(() => branches.find((b) => b.name === form.sellingBranch), [branches, form.sellingBranch]);
+  const branch = useMemo(() => branches.find((b) => b.name === sellingBranch), [branches, sellingBranch]);
   const isEndCustomer = form.origin === 'END_CUSTOMER';
+  const complaintDate = todayIso();
+  const factory = invoice?.manufacturing_factory || '';
 
   function changeDefect(id, patch) {
     setDefects((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
@@ -476,8 +574,8 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
 
   function validate() {
     const e = {};
-    if (!form.sellingBranch) e.sellingBranch = 'Select a selling branch.';
-    if (!form.dealerCode) e.dealerCode = 'Select a dealer.';
+    if (!sellingBranch) e.sellingBranch = 'Select a selling branch.';
+    if (!dealerCode) e.dealerCode = 'Select a dealer.';
     if (isEndCustomer) {
       if (!form.customerName.trim()) e.customerName = 'Customer name is required.';
       if (!/^[6-9]\d{9}$/.test(form.customerMobile.trim())) e.customerMobile = 'Enter a 10-digit mobile number.';
@@ -490,8 +588,10 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         const d = defects[l.line_key];
         const le = {};
         if (!Number.isInteger(Number(d.qty))) le.qty = 'Whole number only.';
-        else if (l.quantity != null && Number(d.qty) > Number(l.quantity)) le.qty = `Max ${Number(l.quantity)}.`;
+        else if (l.quantity != null && Number(d.qty) > Number(l.quantity)) le.qty = `Defective qty cannot be more than Qty Supplied (${Number(l.quantity)}).`;
         if (!d.primary) le.primary = 'Select the primary nature.';
+        if (d.primary === OTHER && !String(d.primaryOther ?? '').trim()) le.primaryOther = 'Write the other reason.';
+        if (d.secondary === OTHER && !String(d.secondaryOther ?? '').trim()) le.secondaryOther = 'Write the other reason.';
         if (Object.keys(le).length) lineErrors[l.line_key] = le;
       });
       if (Object.keys(lineErrors).length) {
@@ -499,8 +599,12 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         e.lineErrors = lineErrors;
       }
     }
+    if (form.physicalVisit === 'YES') {
+      if (!form.visitDate) e.visitDate = 'Enter the physical visit date.';
+      else if (form.visitDate > complaintDate) e.visitDate = 'The visit date cannot be in the future.';
+    }
     if (!(Number(form.amount) > 0)) e.amount = 'Enter the complaint amount.';
-    if (invoiceFile.length === 0) e.invoiceFile = 'Attach the invoice copy.';
+    if (invoiceFile.length === 0) e.invoiceFile = 'Attach the invoice copy (Duro).';
     if (photos.length === 0) e.photos = 'Attach at least one site photograph.';
     return e;
   }
@@ -520,8 +624,8 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     try {
       const complaintNo = await complaintsApi.file({
         origin: form.origin,
-        selling_branch: form.sellingBranch,
-        dealer_code: form.dealerCode,
+        selling_branch: sellingBranch,
+        dealer_code: dealerCode,
         customer_name: isEndCustomer ? form.customerName.trim() : null,
         customer_mobile: isEndCustomer ? form.customerMobile.trim() : null,
         invoice_no: form.invoiceNo,
@@ -530,9 +634,11 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         line_defects: involvedLines.map((l) => ({
           line_key: l.line_key,
           qty_defective: Number(defects[l.line_key].qty),
-          primary_nature: defects[l.line_key].primary,
-          secondary_nature: defects[l.line_key].secondary || null,
+          primary_nature: natureText(defects[l.line_key].primary, defects[l.line_key].primaryOther),
+          secondary_nature: defects[l.line_key].secondary ? natureText(defects[l.line_key].secondary, defects[l.line_key].secondaryOther) : null,
         })),
+        physical_visit: form.physicalVisit === 'YES',
+        physical_visit_date: form.physicalVisit === 'YES' ? form.visitDate : null,
         amount: Number(form.amount),
         installation_context: form.installationContext,
         remarks: form.remarks,
@@ -540,7 +646,55 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
         photoFiles: photos,
         extraFiles: extras,
       });
-      onFiled(complaintNo);
+      // The complaint is saved and routed. Only the mail can still fail.
+      let message = 'It is with the approver now.';
+      try {
+        const sent = await complaintsApi.notifyFiled(complaintNo);
+        if (sent.waitingOn) message = `Sent to ${sent.waitingOn} for approval.`;
+        if (sent.emailError) message += ` Email not sent: ${sent.emailError}`;
+      } catch {
+        message = 'It is with the approver now. The email could not be sent.';
+      }
+      // Keep a copy of what was filed, for the success dialog and the print.
+      setDone({
+        complaintNo,
+        message,
+        complaintDate,
+        originLabel: ORIGINS.find((o) => o.value === form.origin)?.title,
+        isEndCustomer,
+        customerName: form.customerName.trim(),
+        customerMobile: form.customerMobile.trim(),
+        sellingBranch,
+        zone: branch?.zone || dealer?.zone || '',
+        filedBy: user?.name || '',
+        dealerName: dealer?.customer_name || '',
+        dealerCode,
+        dealerMobile: dealer?.mobile_no || '',
+        dealerEmail: dealer?.email || '',
+        physicalVisit: form.physicalVisit === 'YES',
+        visitDate: form.visitDate,
+        invoiceNo: form.invoiceNo,
+        invoiceDate: invoice?.document_date || '',
+        factory,
+        amount: Number(form.amount),
+        lines: involvedLines.map((l) => ({
+          ...l,
+          supplied: l.quantity,
+          qtyDefective: Number(defects[l.line_key].qty),
+          primary: natureText(defects[l.line_key].primary, defects[l.line_key].primaryOther),
+          secondary: defects[l.line_key].secondary ? natureText(defects[l.line_key].secondary, defects[l.line_key].secondaryOther) : '',
+        })),
+        invoiceFileName: invoiceFile[0]?.name || '',
+        photoNames: photos.map((f) => f.name),
+        extraNames: extras.map((f) => f.name),
+        installation: form.installationContext.trim(),
+        filedAt: '',
+        status: 'Registered',
+        stage: message,
+        remarks: form.remarks.trim(),
+        routing: message,
+      });
+      return;
     } catch (err) {
       setSubmitError(err.message || 'Could not register this complaint.');
     } finally {
@@ -548,249 +702,384 @@ export default function FileComplaintModal({ open, onClose, onFiled }) {
     }
   }
 
-  const ComplaintsIcon = NAV_ICONS.complaints;
-  const textareaClass = `${INPUT} ${INPUT_OK} h-auto min-h-24 resize-y py-3`;
+  const textareaClass = `${INPUT} ${INPUT_OK} h-auto min-h-20 resize-y py-2.5`;
+
+  // Progress through the three steps, for the badges and the progress chips.
+  const partiesDone =
+    Boolean(sellingBranch && dealerCode) &&
+    (!isEndCustomer || Boolean(form.customerName.trim() && /^[6-9]\d{9}$/.test(form.customerMobile.trim())));
+  const steps = [
+    { id: 'step-parties', letter: 'A', title: 'Dealer', done: partiesDone },
+    { id: 'step-invoice', letter: 'B', title: 'Invoice & amount', done: Boolean(form.invoiceNo) && involvedLines.length > 0 && Number(form.amount) > 0 },
+    { id: 'step-evidence', letter: 'C', title: 'Evidence', done: invoiceFile.length > 0 && photos.length > 0 },
+  ];
 
   return (
-    <Modal
-      open={open}
-      size="2xl"
-      title="File a New Complaint"
-      subtitle="One sheet, top to bottom."
-      icon={ComplaintsIcon && <ComplaintsIcon />}
-      onClose={onClose}
-      locked={isSaving}
-      footer={
-        <>
-          <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>
-            Cancel
-          </Button>
-          <Button type="submit" form="file-complaint-form" isLoading={isSaving}>
-            Register Complaint
-          </Button>
-        </>
-      }
+    <ModulePage
+      title="Register Complaint"
+      live
+      actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}
     >
-      <form id="file-complaint-form" onSubmit={handleSubmit} noValidate>
-        <SectionTitle icon={SECTION_ICONS.parties}>A. Origination &amp; Parties</SectionTitle>
-        <OriginCards value={form.origin} onChange={(v) => set('origin', v)} />
+      <form id="file-complaint-form" onSubmit={handleSubmit} noValidate className="flex w-full min-w-0 flex-col gap-4">
+        <nav aria-label="Progress" className="flex flex-wrap gap-2">
+          {steps.map((s) => (
+            <a
+              key={s.id}
+              href={`#${s.id}`}
+              onClick={(ev) => {
+                ev.preventDefault();
+                document.getElementById(s.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1 text-theme-xs font-medium transition-colors ${
+                s.done ? 'border-success-200 bg-success-50 text-success-700' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200 hover:text-brand-600'
+              }`}
+            >
+              <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold ${s.done ? 'bg-success-500 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                {s.done ? <Svg className="h-3 w-3">{CHECK}</Svg> : s.letter}
+              </span>
+              {s.title}
+            </a>
+          ))}
+        </nav>
 
-        <div id="complaint-sellingBranch" className="mb-4">
-          <Select
-            id="complaint-branch"
-            label={<Req>Dealer Selling Branch</Req>}
-            value={form.sellingBranch}
-            onChange={(e) => {
-              set('sellingBranch', e.target.value);
-              set('dealerCode', '');
-              set('invoiceNo', '');
-            }}
-            disabled={branchesState.loading || branches.length === 1}
-            className={errors.sellingBranch ? '!border-error-300' : ''}
-          >
-            <option value="">{branchesState.loading ? 'Loading branches…' : '— select —'}</option>
-            {branches.map((b) => (
-              <option key={b.name} value={b.name}>
-                {b.name}
-              </option>
-            ))}
-          </Select>
-          {errors.sellingBranch && <p className={HINT_ERROR}>{errors.sellingBranch}</p>}
-          {branchesState.error && <Alert variant="error" className="mt-2">{branchesState.error}</Alert>}
-        </div>
-
-        <div id="complaint-dealerCode" className="mb-1">
-          <Select
-            id="complaint-dealer"
-            label={<Req>Dealer Name</Req>}
-            value={form.dealerCode}
-            onChange={(e) => {
-              set('dealerCode', e.target.value);
-              set('invoiceNo', '');
-            }}
-            disabled={!form.sellingBranch || dealersState.loading}
-            className={errors.dealerCode ? '!border-error-300' : ''}
-          >
-            <option value="">
-              {!form.sellingBranch ? 'Select a selling branch first' : dealersState.loading ? 'Loading dealers…' : dealers.length === 0 ? 'No dealers in this branch' : '— select —'}
-            </option>
-            {dealers.map((d) => (
-              <option key={d.customer_code} value={d.customer_code}>
-                {d.customer_name} ({d.customer_code})
-              </option>
-            ))}
-          </Select>
-          {errors.dealerCode && <p className={HINT_ERROR}>{errors.dealerCode}</p>}
-          {dealersState.error ? (
-            <Alert variant="error" className="mt-2">{dealersState.error}</Alert>
-          ) : (
-            <p className="mt-1.5 flex items-center gap-1.5 text-theme-xs text-gray-500">
-              <Svg className="h-3.5 w-3.5">{ORIGINS[0].icon}</Svg>
-              Dealers with sales in {form.sellingBranch || 'the selected branch'}, from the sales records.
-            </p>
-          )}
-        </div>
-
-        {isEndCustomer && (
-          <div className="mt-4 grid grid-cols-1 gap-x-5 sm:grid-cols-2">
-            <div id="complaint-customerName">
-              <TextInput
-                id="complaint-customer-name"
-                label={<Req>Customer Name</Req>}
-                placeholder="Name of the end-customer"
-                value={form.customerName}
-                onChange={(e) => set('customerName', e.target.value)}
-                error={errors.customerName}
-              />
+        <Section id="step-parties" step="A" icon={SECTION_ICONS.parties} title="Origination & dealer"  done={steps[0].done}>
+          <div className="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <OriginCards value={form.origin} onChange={changeOrigin} />
             </div>
-            <div id="complaint-customerMobile">
+
+            <div id="complaint-sellingBranch">
+              <Select
+                id="complaint-branch"
+                label={<Req>Selling Branch</Req>}
+                value={form.sellingBranch}
+                onChange={(e) => {
+                  set('sellingBranch', e.target.value);
+                  set('dealerCode', '');
+                  set('invoiceNo', '');
+                }}
+                disabled={branchesState.loading || branches.length <= 1}
+                className={errors.sellingBranch ? '!border-error-300' : ''}
+              >
+                {branchesState.loading && <option value="">Loading branches…</option>}
+                {!branchesState.loading && branches.length === 0 && <option value="">No selling branch assigned</option>}
+                {branches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}
+                  </option>
+                ))}
+              </Select>
+              {errors.sellingBranch && <p className={HINT_ERROR}>{errors.sellingBranch}</p>}
+              {branchesState.error ? (
+                <Alert variant="error" className="mt-2">{branchesState.error}</Alert>
+              ) : (
+                <p className="mt-1.5 text-theme-xs text-gray-500">
+                  {branches.length > 1 ? `${branches.length} selling branches are tagged to you.` : 'Your selling branch.'}
+                </p>
+              )}
+            </div>
+
+            <div id="complaint-dealerCode">
+              <Select
+                id="complaint-dealer"
+                label={<Req>Dealer Name</Req>}
+                value={form.dealerCode}
+                onChange={(e) => {
+                  set('dealerCode', e.target.value);
+                  set('invoiceNo', '');
+                }}
+                disabled={!form.sellingBranch || dealersState.loading}
+                className={errors.dealerCode ? '!border-error-300' : ''}
+              >
+                <option value="">
+                  {!form.sellingBranch ? 'Select a selling branch first' : dealersState.loading ? 'Loading dealers…' : dealers.length === 0 ? 'No dealers in this branch' : '— select —'}
+                </option>
+                {dealers.map((d) => (
+                  <option key={d.customer_code} value={d.customer_code}>
+                    {d.customer_name} ({d.customer_code})
+                  </option>
+                ))}
+              </Select>
+              {errors.dealerCode && <p className={HINT_ERROR}>{errors.dealerCode}</p>}
+              {dealersState.error ? (
+                <Alert variant="error" className="mt-2">{dealersState.error}</Alert>
+              ) : (
+                <p className="mt-1.5 text-theme-xs text-gray-500">Dealers with sales in {form.sellingBranch || 'the selected branch'}.</p>
+              )}
+            </div>
+
+            <TextInput
+              id="complaint-date"
+              label="Complaint Date"
+              value={formatDate(complaintDate)}
+              readOnly
+              hint="Today. Set automatically."
+            />
+            <TextInput
+              id="complaint-dealer-mobile"
+              label="Dealer Mobile Number"
+              placeholder="Fills in when you select a dealer"
+              value={dealer ? dealer.mobile_no || 'Not on file' : ''}
+              readOnly
+            />
+            <TextInput
+              id="complaint-dealer-email"
+              label="Dealer Email ID"
+              placeholder="Fills in when you select a dealer"
+              value={dealer ? dealer.email || 'Not on file' : ''}
+              readOnly
+            />
+            <div id="complaint-visitDate" className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <div>
+                <p className={LABEL}>Physical Visit</p>
+                <div className="grid w-full max-w-[12rem] grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1" role="radiogroup" aria-label="Physical visit">
+                  {[['YES', 'Yes'], ['NO', 'No']].map(([value, text]) => {
+                    const active = form.physicalVisit === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          set('physicalVisit', value);
+                          if (value === 'NO') set('visitDate', '');
+                        }}
+                        className={`flex h-9 items-center justify-center rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
+                          active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        {text}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {form.physicalVisit === 'YES' && (
+                <TextInput
+                  id="complaint-visit-date"
+                  label={<Req>Physical Visit Date</Req>}
+                  type="date"
+                  max={complaintDate}
+                  value={form.visitDate}
+                  onChange={(e) => set('visitDate', e.target.value)}
+                  error={errors.visitDate}
+                />
+              )}
+            </div>
+
+            {isEndCustomer && (
+              <>
+                <div id="complaint-customerName">
+                  <TextInput
+                    id="complaint-customer-name"
+                    label={<Req>Customer Name</Req>}
+                    placeholder="Name of the end-customer"
+                    value={form.customerName}
+                    onChange={(e) => set('customerName', e.target.value)}
+                    error={errors.customerName}
+                  />
+                </div>
+                <div id="complaint-customerMobile">
+                  <TextInput
+                    id="complaint-customer-mobile"
+                    label={<Req>Customer Mobile</Req>}
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="10-digit mobile number"
+                    value={form.customerMobile}
+                    onChange={(e) => set('customerMobile', e.target.value.replace(/\D/g, ''))}
+                    error={errors.customerMobile}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        </Section>
+
+        <Section id="step-invoice" step="B" icon={SECTION_ICONS.invoice} title="Invoice & product lines"  done={steps[1].done}>
+          <div className="mb-4 grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-2">
+            <div id="complaint-invoiceNo">
+              <Select
+                id="complaint-invoice"
+                label={<Req>Invoice Number</Req>}
+                value={form.invoiceNo}
+                onChange={(e) => set('invoiceNo', e.target.value)}
+                disabled={!dealerCode || invoicesState.loading}
+                className={errors.invoiceNo ? '!border-error-300' : ''}
+              >
+                <option value="">
+                  {!dealerCode ? 'Select a dealer first' : invoicesState.loading ? 'Loading invoices…' : invoices.length === 0 ? 'No invoices found for this dealer' : '— select —'}
+                </option>
+                {invoices.map((i) => (
+                  <option key={i.document_number} value={i.document_number}>
+                    {i.document_number} · {formatDate(i.document_date)} · {formatRupees(i.net_amount)}
+                  </option>
+                ))}
+              </Select>
+              {errors.invoiceNo && <p className={HINT_ERROR}>{errors.invoiceNo}</p>}
+              {invoicesState.error && <Alert variant="error" className="mt-2">{invoicesState.error}</Alert>}
+            </div>
+            <div id="complaint-amount">
               <TextInput
-                id="complaint-customer-mobile"
-                label={<Req>Customer Mobile</Req>}
-                type="tel"
-                inputMode="numeric"
-                maxLength={10}
-                placeholder="10-digit mobile number"
-                value={form.customerMobile}
-                onChange={(e) => set('customerMobile', e.target.value.replace(/\D/g, ''))}
-                error={errors.customerMobile}
+                id="complaint-amount-input"
+                label={<Req>Complaint Amount (₹)</Req>}
+                type="number"
+                min="1"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Approximate compensation value"
+                value={form.amount}
+                onChange={(e) => set('amount', e.target.value)}
+                error={errors.amount}
               />
+              <p className="-mt-3 text-theme-xs text-gray-500">The amount decides which manager level approves.</p>
             </div>
           </div>
-        )}
-
-        <SectionTitle icon={SECTION_ICONS.invoice}>B. Invoice &amp; Product Lines</SectionTitle>
-        <div id="complaint-invoiceNo" className="mb-4">
-          <Select
-            id="complaint-invoice"
-            label={<Req>Invoice Number</Req>}
-            value={form.invoiceNo}
-            onChange={(e) => set('invoiceNo', e.target.value)}
-            disabled={!form.dealerCode || invoicesState.loading}
-            className={errors.invoiceNo ? '!border-error-300' : ''}
-          >
-            <option value="">
-              {!form.dealerCode ? 'Select a Dealer first' : invoicesState.loading ? 'Loading invoices…' : invoices.length === 0 ? 'No invoices found for this dealer' : '— select —'}
-            </option>
-            {invoices.map((i) => (
-              <option key={i.document_number} value={i.document_number}>
-                {i.document_number} · {formatDate(i.document_date)} · {formatRupees(i.net_amount)}
-              </option>
-            ))}
-          </Select>
-          {errors.invoiceNo && <p className={HINT_ERROR}>{errors.invoiceNo}</p>}
-          {invoicesState.error ? (
-            <Alert variant="error" className="mt-2">{invoicesState.error}</Alert>
-          ) : (
-            <p className="mt-1.5 text-theme-xs text-gray-500">Billed-from-Duroply invoices for this dealer, pulled from the backend, not typed.</p>
+          {form.invoiceNo && (
+            <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <InfoCard label="Invoice Date" value={invoice?.document_date ? formatDate(invoice.document_date) : ''} />
+              <InfoCard label="Zone" value={branch?.zone || dealer?.zone} />
+              <InfoCard label="Billing Branch" value={invoice?.billing_branch} />
+              <InfoCard label="Selling Branch" value={sellingBranch} />
+              <InfoCard label="Manufacturing Factory" value={factory} />
+            </div>
           )}
-        </div>
-        {form.invoiceNo && (
-          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <InfoCard label="Invoice Date" value={invoice?.document_date ? formatDate(invoice.document_date) : ''} />
-            <InfoCard label="Zone" value={branch?.zone || dealer?.zone} />
-            <InfoCard label="Selling Branch" value={form.sellingBranch} />
+          <div id="complaint-lines">
+            <InvoiceLines
+              invoiceNo={form.invoiceNo}
+              lines={lines}
+              isLoading={linesState.loading}
+              error={linesState.error}
+              defects={defects}
+              onChange={changeDefect}
+              lineErrors={errors.lineErrors}
+            />
+            {errors.lines && <p className={HINT_ERROR}>{errors.lines}</p>}
           </div>
-        )}
-        <div id="complaint-lines">
-          <InvoiceLines
-            invoiceNo={form.invoiceNo}
-            lines={lines}
-            isLoading={linesState.loading}
-            error={linesState.error}
-            defects={defects}
-            onChange={changeDefect}
-            lineErrors={errors.lineErrors}
-          />
-          {errors.lines && <p className={HINT_ERROR}>{errors.lines}</p>}
-        </div>
+        </Section>
 
-        <SectionTitle icon={SECTION_ICONS.value}>C. Complaint Value</SectionTitle>
-        <div id="complaint-amount">
-          <TextInput
-            id="complaint-amount-input"
-            label={<Req>Complaint Amount (₹)</Req>}
-            type="number"
-            min="1"
-            step="0.01"
-            inputMode="decimal"
-            placeholder="Approximate compensation value"
-            value={form.amount}
-            onChange={(e) => set('amount', e.target.value)}
-            error={errors.amount}
-          />
-        </div>
+        <Section id="step-evidence" step="C" icon={SECTION_ICONS.evidence} title="Evidence & remarks"  done={steps[2].done}>
+          <div className="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-2">
+            <div id="complaint-invoiceFile">
+              <FileDrop
+                id="complaint-invoice-file"
+                label={<Req>Invoice Copy (Duro)</Req>}
+                title="Attach invoice"
+                hint="PDF or image"
+                accept="application/pdf,image/jpeg,image/png"
+                files={invoiceFile}
+                onChange={(f) => (setInvoiceFile(f), setErrors((e) => ({ ...e, invoiceFile: undefined })))}
+                onReject={(m) => setErrors((e) => ({ ...e, invoiceFile: m }))}
+                error={errors.invoiceFile}
+              />
+            </div>
+            <div id="complaint-photos">
+              <FileDrop
+                id="complaint-photos-file"
+                label={<Req note="(at least one)">Site Photographs</Req>}
+                title="Attach photo"
+                hint="JPEG or PNG"
+                accept="image/jpeg,image/png"
+                multiple
+                files={photos}
+                onChange={(f) => (setPhotos(f), setErrors((e) => ({ ...e, photos: undefined })))}
+                onReject={(m) => setErrors((e) => ({ ...e, photos: m }))}
+                error={errors.photos}
+              />
+            </div>
 
-        <SectionTitle icon={SECTION_ICONS.evidence}>D. Evidence</SectionTitle>
-        <div id="complaint-invoiceFile">
-          <FileDrop
-            id="complaint-invoice-file"
-            label={<Req>Invoice Copy</Req>}
-            title="Attach invoice"
-            hint="PDF or image"
-            accept="application/pdf,image/jpeg,image/png"
-            files={invoiceFile}
-            onChange={(f) => (setInvoiceFile(f), setErrors((e) => ({ ...e, invoiceFile: undefined })))}
-            onReject={(m) => setErrors((e) => ({ ...e, invoiceFile: m }))}
-            error={errors.invoiceFile}
-          />
-        </div>
-        <div id="complaint-photos">
-          <FileDrop
-            id="complaint-photos-file"
-            label={<Req note="(at least one)">Site Photographs</Req>}
-            title="Attach photo"
-            hint="JPEG or PNG"
-            accept="image/jpeg,image/png"
-            multiple
-            files={photos}
-            onChange={(f) => (setPhotos(f), setErrors((e) => ({ ...e, photos: undefined })))}
-            onReject={(m) => setErrors((e) => ({ ...e, photos: m }))}
-            error={errors.photos}
-          />
-        </div>
+            {/* <div>
+              <label htmlFor="complaint-install" className={LABEL}>Installation Context</label>
+              <textarea
+                id="complaint-install"
+                rows={2}
+                placeholder="Optional notes"
+                value={form.installationContext}
+                onChange={(e) => set('installationContext', e.target.value)}
+                className={textareaClass}
+              />
+            </div> */}
+            <div>
+              <label htmlFor="complaint-remarks" className={LABEL}>Dealer / Customer Remarks</label>
+              <textarea
+                id="complaint-remarks"
+                rows={2}
+                placeholder="Optional"
+                value={form.remarks}
+                onChange={(e) => set('remarks', e.target.value)}
+                className={textareaClass}
+              />
+            </div>
 
-        <div className="mb-5">
-          <label htmlFor="complaint-install" className={LABEL}>Installation Context</label>
-          <textarea
-            id="complaint-install"
-            rows={3}
-            placeholder="Optional notes"
-            value={form.installationContext}
-            onChange={(e) => set('installationContext', e.target.value)}
-            className={textareaClass}
-          />
-        </div>
-        <div className="mb-5">
-          <label htmlFor="complaint-remarks" className={LABEL}>Dealer / Customer Remarks</label>
-          <textarea
-            id="complaint-remarks"
-            rows={3}
-            placeholder="Optional"
-            value={form.remarks}
-            onChange={(e) => set('remarks', e.target.value)}
-            className={textareaClass}
-          />
-        </div>
+            {/* <div className="md:col-span-2">
+              <FileDrop
+                id="complaint-extra-file"
+                label="Additional Supporting Documents"
+                title="Attach document (optional)"
+                hint="Optional"
+                accept="application/pdf,image/jpeg,image/png"
+                multiple
+                files={extras}
+                onChange={setExtras}
+                onReject={(m) => setSubmitError(m)}
+              />
+            </div> */}
+          </div>
+        </Section>
 
-        <FileDrop
-          id="complaint-extra-file"
-          label="Additional Supporting Documents"
-          title="Attach document (optional)"
-          hint="Optional"
-          accept="application/pdf,image/jpeg,image/png"
-          multiple
-          files={extras}
-          onChange={setExtras}
-          onReject={(m) => setSubmitError(m)}
-        />
-
-        {submitError && (
-          <Alert variant="error" className="mt-2">
-            {submitError}
-          </Alert>
-        )}
+        <div className="sticky bottom-3 z-10 flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-theme-md backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="min-w-0 flex-1">
+            {submitError ? <Alert variant="error">{submitError}</Alert> : <p className="text-theme-sm text-gray-500">Check the details, then register the complaint.</p>}
+          </div>
+          <div className="flex shrink-0 gap-3">
+            <Button type="button" variant="secondary" onClick={() => toHistory()} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={isSaving}>
+              Register Complaint
+            </Button>
+          </div>
+        </div>
       </form>
-    </Modal>
+
+      <Modal
+        open={Boolean(done)}
+        onClose={onReset}
+        title="Complaint registered"
+        subtitle="The complaint was filed successfully."
+        icon={<Svg className="h-5 w-5">{CHECK}</Svg>}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => toHistory()}>Complaint History</Button>
+            <Button variant="secondary" onClick={download} isLoading={downloading}>Download PDF</Button>
+            <Button onClick={onReset}>Register Another</Button>
+          </>
+        }
+      >
+        {done && (
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-success-500 text-white shadow-theme-sm">
+              <Svg className="h-7 w-7">{CHECK}</Svg>
+            </span>
+            <p className="text-theme-sm text-gray-600">Your complaint number is</p>
+            <p className="rounded-xl border border-success-200 bg-success-50 px-5 py-2 text-xl font-semibold tracking-wide text-gray-800">{done.complaintNo}</p>
+            <p className="text-theme-sm text-gray-600">{done.message}</p>
+            {downloadError && <Alert variant="error">{downloadError}</Alert>}
+          </div>
+        )}
+      </Modal>
+    </ModulePage>
+  );
+}
+
+export default function FileComplaintPage() {
+  // A new key remounts the form, so it starts empty for the next complaint.
+  const [round, setRound] = useState(0);
+  return (
+    <ComplaintGate need="file">
+      <FileComplaintForm key={round} onReset={() => setRound((n) => n + 1)} />
+    </ComplaintGate>
   );
 }

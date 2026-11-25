@@ -18,7 +18,9 @@ export default function HeaderSearch({ navItems = [], basePath }) {
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return navItems.filter((item) => item.implemented && item.label.toLowerCase().includes(q)).slice(0, 6);
+    // A menu with a submenu is searched by its sub-pages.
+    const pages = navItems.flatMap((item) => (item.children?.length ? item.children : [item]));
+    return pages.filter((item) => item.implemented && item.label.toLowerCase().includes(q)).slice(0, 6);
   }, [navItems, query]);
 
   function open(item) {
@@ -63,7 +65,7 @@ export default function HeaderSearch({ navItems = [], basePath }) {
             <li className="px-4 py-3 text-theme-sm text-gray-500">No page matches “{query.trim()}”.</li>
           ) : (
             matches.map((item) => {
-              const Icon = NAV_ICONS[item.key];
+              const Icon = NAV_ICONS[item.key] || NAV_ICONS[item.iconKey];
               return (
                 <li key={item.key}>
                   <button

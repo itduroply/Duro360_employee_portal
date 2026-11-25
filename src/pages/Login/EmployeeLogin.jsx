@@ -75,7 +75,7 @@ export default function EmployeeLogin() {
         {/* "We are a GROWTH COMPANY" artwork (large screens only), fading in from the top */}
         <div className="relative hidden min-h-0 flex-1 items-end lg:flex">
           <div
-            style={{ '--w': 'min(100%, 50vh)', width: 'var(--w)', paddingBottom: 'calc(var(--w) * 0.11)' }}
+            style={{ '--w': 'min(100%, 50vh)', width: 'var(--w)', paddingBottom: 'calc(var(--w) * 0.11)', containerType: 'inline-size' }}
             className="relative"
           >
             <img
@@ -93,7 +93,7 @@ export default function EmployeeLogin() {
               className="pointer-events-none absolute select-none cc-walk"
             />
             <p
-              style={{ fontSize: 'calc(var(--w) * 0.062)' }}
+              style={{ fontSize: '6.2cqw' }}
               className="absolute right-0 bottom-0 font-['Jost'] font-bold leading-none tracking-wide text-[#C8B99A]"
             >
               COMPANY

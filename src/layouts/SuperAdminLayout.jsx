@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import axiosClient from '../api/axiosClient';
 import ConsoleLayout from './ConsoleLayout.jsx';
-import { getSidebarForRole } from '../components/Sidebar/sidebarConfig.js';
+import { complaintRights, getSidebarForRole, withComplaintPages } from '../components/Sidebar/sidebarConfig.js';
+import useComplaintAccess from '../pages/Complaints/useComplaintAccess.js';
 
 /**
  * Super Admin Console -- always gets the full sidebar (every Admin Console
@@ -10,6 +11,7 @@ import { getSidebarForRole } from '../components/Sidebar/sidebarConfig.js';
  */
 export default function SuperAdminLayout() {
   const [simulatorEnabled, setSimulatorEnabled] = useState(true);
+  const { access: complaintAccess, refresh: refreshComplaintAccess } = useComplaintAccess();
 
   useEffect(() => {
     let cancelled = false;
@@ -26,14 +28,15 @@ export default function SuperAdminLayout() {
     };
   }, []);
 
-  const navItems = getSidebarForRole('SUPERADMIN', { simulatorEnabled });
+  const rights = complaintRights({ isSuperAdmin: true, access: complaintAccess });
+  const navItems = withComplaintPages(getSidebarForRole('SUPERADMIN', { simulatorEnabled }), rights);
 
   return (
     <ConsoleLayout
       consoleLabel="SUPER ADMIN CONSOLE"
       basePath="/superadmin"
       navItems={navItems}
-      outletContext={{ simulatorEnabled }}
+      outletContext={{ simulatorEnabled, complaintAccess, complaintRights: rights, refreshComplaintAccess }}
     />
   );
 }

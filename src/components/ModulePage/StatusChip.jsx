@@ -13,7 +13,7 @@ const STATUS_TONE = {
   Pending: 'warning', 'Partly Paid': 'warning', 'In Progress': 'warning', Upcoming: 'warning', Scheduled: 'warning', Open: 'warning', Overdue: 'warning',
   Cancelled: 'error', Unpaid: 'error', Returned: 'error', 'Over Credit Limit': 'error', 'Failed login': 'error', Rejected: 'error',
   Approved: 'brand', Dispatched: 'brand', Registered: 'brand',
-  'In Review': 'warning',
+  'In Review': 'warning', 'Pending with Manager': 'warning', 'Pending with Accounts': 'warning',
   Closed: 'gray', Expired: 'gray', Drafts: 'gray',
 };
 
