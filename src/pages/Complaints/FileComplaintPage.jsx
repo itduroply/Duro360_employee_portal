@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import ModulePage from '../../components/ModulePage/ModulePage.jsx';
 import Button from '../../components/common/Button.jsx';
 import TextInput from '../../components/common/TextInput.jsx';
@@ -17,11 +17,77 @@ import { downloadComplaint } from './printComplaint.js';
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // matches the complaint-docs bucket limit
 const EMPTY_FORM = {
   origin: 'DEALER', sellingBranch: '', dealerCode: '', customerName: '', customerMobile: '', invoiceNo: '',
-  amount: '', installationContext: '', remarks: '', physicalVisit: 'NO', visitDate: '',
+  amount: '', installationContext: '', remarks: '', branchRemarks: '', factoryResponse: '', physicalVisit: 'NO', visitDate: '',
 };
+
+// "Other: cracks at the edge" -> { nature: 'Other', other: 'cracks at the edge' }
+function splitNature(value) {
+  const text = String(value ?? '');
+  if (!text) return { nature: '', other: '' };
+  if (NATURES.includes(text)) return { nature: text, other: '' };
+  if (text === OTHER || text.startsWith(`${OTHER}:`)) return { nature: OTHER, other: text.slice(OTHER.length + 1).trim() };
+  // A value from outside the list: keep it by treating it as an "Other" reason.
+  return { nature: OTHER, other: text };
+}
+
+const baseName = (path) => String(path || '').split('/').pop();
+const storedFile = (path) => ({ name: baseName(path), path });
+
+// A saved complaint, turned into the form's own state. Product lines have no
+// line key in the saved row, so their position stands in for it.
+function formFromComplaint(c) {
+  const lines = (Array.isArray(c.lines) ? c.lines : []).map((l, i) => ({ ...l, line_key: String(i) }));
+  const defects = {};
+  lines.forEach((l) => {
+    const primary = splitNature(l.primary_nature);
+    const secondary = splitNature(l.secondary_nature);
+    defects[l.line_key] = {
+      qty: l.qty_defective != null ? String(l.qty_defective) : '',
+      primary: primary.nature,
+      primaryOther: primary.other,
+      secondary: secondary.nature,
+      secondaryOther: secondary.other,
+    };
+  });
+  return {
+    lines,
+    defects,
+    form: {
+      origin: c.origin,
+      sellingBranch: c.selling_branch || '',
+      dealerCode: c.dealer_code || '',
+      customerName: c.customer_name || '',
+      customerMobile: c.customer_mobile || '',
+      invoiceNo: c.invoice_no || '',
+      amount: c.amount != null ? String(c.amount) : '',
+      installationContext: c.installation_context || '',
+      remarks: c.remarks || '',
+      branchRemarks: c.branch_remarks || '',
+      factoryResponse: c.factory_response || '',
+      physicalVisit: c.physical_visit ? 'YES' : 'NO',
+      visitDate: c.physical_visit_date || '',
+    },
+    invoiceFile: c.invoice_path ? [storedFile(c.invoice_path)] : [],
+    photos: (c.photo_paths ?? []).map(storedFile),
+    extras: (c.extra_paths ?? []).map(storedFile),
+    // Stand-ins for the lookups, so the locked selects still show the saved choice.
+    branch: { name: c.selling_branch || c.branch_name || '' },
+    dealer: { customer_code: c.dealer_code, customer_name: c.dealer_name, mobile_no: c.dealer_mobile, email: c.dealer_email },
+    invoice: { document_number: c.invoice_no, document_date: c.invoice_date, manufacturing_factory: c.manufacturing_factory },
+  };
+}
 
 // Today's date in India as YYYY-MM-DD. This is the complaint date.
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+// The complaint should close within 30 days of its date.
+export const CLOSE_WITHIN_DAYS = 30;
+export function addDays(iso, days) {
+  if (!iso) return '';
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 // A nature of "Other" is saved as "Other: <reason>".
 export const OTHER = 'Other';
@@ -135,7 +201,7 @@ function fileSize(bytes) {
 
 // A dashed drop zone. Shows the chosen files below it, each with a remove
 // button. `multiple` zones keep adding files; single zones replace.
-export function FileDrop({ id, label, title, hint, accept, multiple = false, files, onChange, error, onReject }) {
+export function FileDrop({ id, label, title, hint, accept, multiple = false, maxFiles, files, onChange, error, onReject }) {
   const inputRef = useRef(null);
   const [isOver, setIsOver] = useState(false);
 
@@ -144,6 +210,10 @@ export function FileDrop({ id, label, title, hint, accept, multiple = false, fil
     const tooBig = picked.find((f) => f.size > MAX_FILE_BYTES);
     if (tooBig) {
       onReject(`${tooBig.name} is larger than 10 MB.`);
+      return;
+    }
+    if (multiple && maxFiles && files.length + picked.length > maxFiles) {
+      onReject(`You can attach only ${maxFiles} files. Remove one to add another.`);
       return;
     }
     onChange(multiple ? [...files, ...picked] : picked.slice(0, 1));
@@ -217,7 +287,7 @@ export function FileDrop({ id, label, title, hint, accept, multiple = false, fil
   );
 }
 
-function OriginCards({ value, onChange }) {
+function OriginCards({ value, onChange, disabled = false }) {
   const current = ORIGINS.find((o) => o.value === value);
   return (
     <div>
@@ -231,9 +301,10 @@ function OriginCards({ value, onChange }) {
               type="button"
               role="radio"
               aria-checked={active}
+              disabled={disabled}
               onClick={() => onChange(o.value)}
-              className={`flex h-9 items-center justify-center gap-2 rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
-                active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700'
+              className={`flex h-9 items-center justify-center gap-2 rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 disabled:cursor-not-allowed ${
+                active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700 disabled:opacity-50'
               }`}
             >
               <Svg className="h-4 w-4">{o.icon}</Svg>
@@ -420,7 +491,12 @@ function InvoiceLines({ invoiceNo, lines, isLoading, error, defects, onChange, l
 function FileComplaintForm({ onReset }) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const toHistory = (state) => navigate('../history', { relative: 'path', state });
+  // /complaints/edit/:id opens this same form, filled in with a saved complaint.
+  // Only what the filer may still change stays open; the rest is locked.
+  const { id: editId } = useParams();
+  const isEdit = Boolean(editId);
+  const [editState, setEditState] = useState({ loading: isEdit, error: '', complaintNo: '', complaintDate: '', actualCloseDate: '' });
+  const toHistory = (state) => navigate(isEdit ? '../../history' : '../history', { relative: 'path', state });
   const [done, setDone] = useState(null); // set once the complaint is saved: drives the success dialog
   const [downloadError, setDownloadError] = useState('');
   const [downloading, setDownloading] = useState(false);
@@ -441,6 +517,7 @@ function FileComplaintForm({ onReset }) {
   const [extras, setExtras] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
+  const [originNotice, setOriginNotice] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const [branches, setBranches] = useState([]);
@@ -469,13 +546,70 @@ function FileComplaintForm({ onReset }) {
     setExtras([]);
     setErrors({});
     setSubmitError('');
+    setOriginNotice(`Switched to ${ORIGINS.find((o) => o.value === next)?.title}. The form has been reset.`);
+    document.getElementById('file-complaint-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  // The switch note goes away by itself.
+  useEffect(() => {
+    if (!originNotice) return undefined;
+    const timer = setTimeout(() => setOriginNotice(''), 6000);
+    return () => clearTimeout(timer);
+  }, [originNotice]);
 
   // The selling branches come from Assign Users: the database returns only the
   // branches this person is tagged with (every branch if none are tagged). The
   // first one is picked by default, and the dealers follow the picked branch.
   useEffect(() => {
     let cancelled = false;
+    if (isEdit) {
+      setEditState({ loading: true, error: '', complaintNo: '', complaintDate: '', actualCloseDate: '' });
+      Promise.all([complaintsApi.get(editId), complaintsApi.editRights(editId)])
+        .then(([row, rights]) => {
+          if (cancelled) return;
+          if (!row) throw new Error('This complaint was not found.');
+          if (!rights?.canEditComplaint) {
+            throw new Error('This complaint can no longer be edited. It is locked once an approver has decided on it.');
+          }
+          const saved = formFromComplaint(row);
+          setForm(saved.form);
+          setInvoiceFile(saved.invoiceFile);
+          setPhotos(saved.photos);
+          setExtras(saved.extras);
+          setBranches([saved.branch]);
+          setDealers([saved.dealer]);
+          setInvoices([saved.invoice]);
+          setLines(saved.lines);
+          setDefects(saved.defects);
+          setEditState({
+            loading: false,
+            error: '',
+            complaintNo: row.complaint_no,
+            complaintDate: row.complaint_date || new Date(row.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
+            actualCloseDate: row.actual_close_date || '',
+          });
+          // Zone and billing branch are not saved on the complaint. Read them
+          // from the same lookups the filing form uses; the form works without them.
+          complaintsApi
+            .branches()
+            .then((list) => {
+              const hit = list.find((b) => b.name === saved.branch.name);
+              if (!cancelled && hit) setBranches([{ ...saved.branch, ...hit }]);
+            })
+            .catch(() => {});
+          complaintsApi
+            .invoices(row.dealer_code)
+            .then((list) => {
+              const hit = list.find((i) => i.document_number === row.invoice_no);
+              if (!cancelled && hit) setInvoices([{ ...saved.invoice, ...hit }]);
+            })
+            .catch(() => {});
+        })
+        .catch((err) => !cancelled && setEditState({ loading: false, error: err.message || 'Could not open this complaint.', complaintNo: '', complaintDate: '', actualCloseDate: '' }));
+      return () => {
+        cancelled = true;
+      };
+    }
     setForm(EMPTY_FORM);
     setInvoiceFile([]);
     setPhotos([]);
@@ -499,10 +633,11 @@ function FileComplaintForm({ onReset }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isEdit, editId]);
 
   // Dealers follow the selling branch.
   useEffect(() => {
+    if (isEdit) return undefined;
     setDealers([]);
     setDealersState({ loading: false, error: '' });
     if (!form.sellingBranch) return undefined;
@@ -515,7 +650,7 @@ function FileComplaintForm({ onReset }) {
     return () => {
       cancelled = true;
     };
-  }, [form.sellingBranch]);
+  }, [form.sellingBranch, isEdit]);
 
   const dealerCode = form.dealerCode;
   const sellingBranch = form.sellingBranch;
@@ -523,6 +658,7 @@ function FileComplaintForm({ onReset }) {
 
   // Invoices follow the dealer.
   useEffect(() => {
+    if (isEdit) return undefined;
     setInvoices([]);
     setLines([]);
     setDefects({});
@@ -536,10 +672,11 @@ function FileComplaintForm({ onReset }) {
     return () => {
       cancelled = true;
     };
-  }, [dealerCode]);
+  }, [dealerCode, isEdit]);
 
   // Product lines follow the invoice; all start ticked.
   useEffect(() => {
+    if (isEdit) return undefined;
     setLines([]);
     setDefects({});
     if (!dealerCode || !form.invoiceNo) return undefined;
@@ -556,13 +693,16 @@ function FileComplaintForm({ onReset }) {
     return () => {
       cancelled = true;
     };
-  }, [dealerCode, form.invoiceNo]);
+  }, [dealerCode, form.invoiceNo, isEdit]);
 
   const invoice = useMemo(() => invoices.find((i) => i.document_number === form.invoiceNo), [invoices, form.invoiceNo]);
   const branch = useMemo(() => branches.find((b) => b.name === sellingBranch), [branches, sellingBranch]);
   const isEndCustomer = form.origin === 'END_CUSTOMER';
-  const complaintDate = todayIso();
-  const factory = invoice?.manufacturing_factory || '';
+  const today = todayIso();
+  const complaintDate = isEdit ? editState.complaintDate : today;
+  // A trading invoice has no factory: leave the field blank.
+  const rawFactory = invoice?.manufacturing_factory || '';
+  const factory = /trading/i.test(rawFactory) ? '' : rawFactory;
 
   function changeDefect(id, patch) {
     setDefects((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
@@ -584,10 +724,12 @@ function FileComplaintForm({ onReset }) {
     else if (involvedLines.length === 0) e.lines = 'Enter a defective quantity on at least one product line.';
     else {
       const lineErrors = {};
-      involvedLines.forEach((l) => {
-        const d = defects[l.line_key];
+      // A saved complaint keeps all its lines: each one needs a quantity.
+      (isEdit ? lines : involvedLines).forEach((l) => {
+        const d = defects[l.line_key] || {};
         const le = {};
-        if (!Number.isInteger(Number(d.qty))) le.qty = 'Whole number only.';
+        if (isEdit && !(Number(d.qty) > 0)) le.qty = 'Enter a whole number above zero.';
+        else if (!Number.isInteger(Number(d.qty))) le.qty = 'Whole number only.';
         else if (l.quantity != null && Number(d.qty) > Number(l.quantity)) le.qty = `Defective qty cannot be more than Qty Supplied (${Number(l.quantity)}).`;
         if (!d.primary) le.primary = 'Select the primary nature.';
         if (d.primary === OTHER && !String(d.primaryOther ?? '').trim()) le.primaryOther = 'Write the other reason.';
@@ -601,7 +743,7 @@ function FileComplaintForm({ onReset }) {
     }
     if (form.physicalVisit === 'YES') {
       if (!form.visitDate) e.visitDate = 'Enter the physical visit date.';
-      else if (form.visitDate > complaintDate) e.visitDate = 'The visit date cannot be in the future.';
+      else if (form.visitDate > today) e.visitDate = 'The visit date cannot be in the future.';
     }
     if (!(Number(form.amount) > 0)) e.amount = 'Enter the complaint amount.';
     if (invoiceFile.length === 0) e.invoiceFile = 'Attach the invoice copy (Duro).';
@@ -621,8 +763,44 @@ function FileComplaintForm({ onReset }) {
     }
     setSubmitError('');
     setIsSaving(true);
+    if (isEdit) {
+      try {
+        const result = await complaintsApi.update({
+          id: editId,
+          amount: Number(form.amount),
+          remarks: form.remarks.trim(),
+          branchRemarks: form.branchRemarks.trim(),
+          factoryResponse: form.factoryResponse,
+          physicalVisit: form.physicalVisit === 'YES',
+          visitDate: form.visitDate,
+          lineDefects: lines.map((l, idx) => ({
+            idx,
+            qty_defective: Number(defects[l.line_key].qty),
+            primary_nature: natureText(defects[l.line_key].primary, defects[l.line_key].primaryOther),
+            secondary_nature: defects[l.line_key].secondary ? natureText(defects[l.line_key].secondary, defects[l.line_key].secondaryOther) : null,
+          })),
+          invoice: invoiceFile[0].path ?? invoiceFile[0],
+          photos: photos.map((f) => f.path ?? f),
+          extras: extras.map((f) => f.path ?? f),
+        });
+        // A new approver has not heard of this complaint yet: mail them (best effort).
+        if (result?.rerouted) complaintsApi.notifyFiled(result.complaintNo).catch(() => {});
+        toHistory({
+          notice: !result?.changed
+            ? 'Nothing changed.'
+            : result.rerouted
+              ? `Complaint ${result.complaintNo} updated. It now goes to ${result.waitingOn || 'a different approver'} for approval.`
+              : `Complaint ${result.complaintNo} updated.`,
+        });
+      } catch (err) {
+        setSubmitError(err.message || 'The complaint could not be saved.');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
     try {
-      const complaintNo = await complaintsApi.file({
+      const { complaintNo, branchRemarksError } = await complaintsApi.file({
         origin: form.origin,
         selling_branch: sellingBranch,
         dealer_code: dealerCode,
@@ -642,6 +820,8 @@ function FileComplaintForm({ onReset }) {
         amount: Number(form.amount),
         installation_context: form.installationContext,
         remarks: form.remarks,
+        branchRemarks: form.branchRemarks,
+        factoryResponse: form.factoryResponse,
         invoiceFile: invoiceFile[0],
         photoFiles: photos,
         extraFiles: extras,
@@ -655,11 +835,13 @@ function FileComplaintForm({ onReset }) {
       } catch {
         message = 'It is with the approver now. The email could not be sent.';
       }
+      if (branchRemarksError) message += ` Branch remarks not saved: ${branchRemarksError}`;
       // Keep a copy of what was filed, for the success dialog and the print.
       setDone({
         complaintNo,
         message,
         complaintDate,
+        targetCloseDate: addDays(complaintDate, CLOSE_WITHIN_DAYS),
         originLabel: ORIGINS.find((o) => o.value === form.origin)?.title,
         isEndCustomer,
         customerName: form.customerName.trim(),
@@ -692,6 +874,8 @@ function FileComplaintForm({ onReset }) {
         status: 'Registered',
         stage: message,
         remarks: form.remarks.trim(),
+        branchRemarks: form.branchRemarks.trim(),
+        factoryResponse: { SATISFIED: 'Satisfied', DISSATISFIED: 'Dissatisfied' }[form.factoryResponse] || '',
         routing: message,
       });
       return;
@@ -714,13 +898,24 @@ function FileComplaintForm({ onReset }) {
     { id: 'step-evidence', letter: 'C', title: 'Evidence', done: invoiceFile.length > 0 && photos.length > 0 },
   ];
 
+  if (isEdit && (editState.loading || editState.error)) {
+    return (
+      <ModulePage title="Edit Complaint" live actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}>
+        {editState.error ? <Alert variant="error">{editState.error}</Alert> : <p className="py-10 text-center text-theme-sm text-gray-500">Opening the complaint…</p>}
+      </ModulePage>
+    );
+  }
+
   return (
     <ModulePage
-      title="Register Complaint"
+      title={isEdit ? `Edit Complaint ${editState.complaintNo}` : 'Register Complaint'}
       live
       actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}
     >
       <form id="file-complaint-form" onSubmit={handleSubmit} noValidate className="flex w-full min-w-0 flex-col gap-4">
+        {originNotice && (
+          <Alert variant="info">{originNotice}</Alert>
+        )}
         <nav aria-label="Progress" className="flex flex-wrap gap-2">
           {steps.map((s) => (
             <a
@@ -745,7 +940,7 @@ function FileComplaintForm({ onReset }) {
         <Section id="step-parties" step="A" icon={SECTION_ICONS.parties} title="Origination & dealer"  done={steps[0].done}>
           <div className="grid grid-cols-1 gap-x-5 gap-y-4 md:grid-cols-2">
             <div className="md:col-span-2">
-              <OriginCards value={form.origin} onChange={changeOrigin} />
+              <OriginCards value={form.origin} onChange={changeOrigin} disabled={isEdit} />
             </div>
 
             <div id="complaint-sellingBranch">
@@ -758,7 +953,7 @@ function FileComplaintForm({ onReset }) {
                   set('dealerCode', '');
                   set('invoiceNo', '');
                 }}
-                disabled={branchesState.loading || branches.length <= 1}
+                disabled={isEdit || branchesState.loading || branches.length <= 1}
                 className={errors.sellingBranch ? '!border-error-300' : ''}
               >
                 {branchesState.loading && <option value="">Loading branches…</option>}
@@ -788,7 +983,7 @@ function FileComplaintForm({ onReset }) {
                   set('dealerCode', e.target.value);
                   set('invoiceNo', '');
                 }}
-                disabled={!form.sellingBranch || dealersState.loading}
+                disabled={isEdit || !form.sellingBranch || dealersState.loading}
                 className={errors.dealerCode ? '!border-error-300' : ''}
               >
                 <option value="">
@@ -808,64 +1003,101 @@ function FileComplaintForm({ onReset }) {
               )}
             </div>
 
-            <TextInput
-              id="complaint-date"
-              label="Complaint Date"
-              value={formatDate(complaintDate)}
-              readOnly
-              hint="Today. Set automatically."
-            />
-            <TextInput
-              id="complaint-dealer-mobile"
-              label="Dealer Mobile Number"
-              placeholder="Fills in when you select a dealer"
-              value={dealer ? dealer.mobile_no || 'Not on file' : ''}
-              readOnly
-            />
-            <TextInput
-              id="complaint-dealer-email"
-              label="Dealer Email ID"
-              placeholder="Fills in when you select a dealer"
-              value={dealer ? dealer.email || 'Not on file' : ''}
-              readOnly
-            />
-            <div id="complaint-visitDate" className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-              <div>
-                <p className={LABEL}>Physical Visit</p>
-                <div className="grid w-full max-w-[12rem] grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1" role="radiogroup" aria-label="Physical visit">
-                  {[['YES', 'Yes'], ['NO', 'No']].map(([value, text]) => {
-                    const active = form.physicalVisit === value;
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => {
-                          set('physicalVisit', value);
-                          if (value === 'NO') set('visitDate', '');
-                        }}
-                        className={`flex h-9 items-center justify-center rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 ${
-                          active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        {text}
-                      </button>
-                    );
-                  })}
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3 lg:grid-cols-5 md:col-span-2">
+              <TextInput
+                id="complaint-date"
+                label="Complaint Date"
+                value={complaintDate ? formatDate(complaintDate) : ''}
+                readOnly
+                disabled={isEdit}
+                hint={isEdit ? 'Filed date' : 'Today, automatic'}
+              />
+              <TextInput
+                id="complaint-target-close-date"
+                label="Target Close Date"
+                value={complaintDate ? formatDate(addDays(complaintDate, CLOSE_WITHIN_DAYS)) : ''}
+                readOnly
+                disabled={isEdit}
+                hint={`${CLOSE_WITHIN_DAYS} days from the complaint date`}
+              />
+              <TextInput
+                id="complaint-actual-close-date"
+                label="Actual Close Date"
+                value={editState.actualCloseDate ? formatDate(editState.actualCloseDate) : ''}
+                placeholder="Not closed yet"
+                readOnly
+                disabled={isEdit}
+                hint="Set when approved or rejected"
+              />
+              <TextInput
+                id="complaint-dealer-mobile"
+                label="Dealer Mobile Number"
+                placeholder="Select a dealer"
+                value={dealer ? dealer.mobile_no || 'Not on file' : ''}
+                readOnly
+                disabled={isEdit}
+              />
+              <TextInput
+                id="complaint-dealer-email"
+                label="Dealer Email ID"
+                placeholder="Select a dealer"
+                value={dealer ? dealer.email || 'Not on file' : ''}
+                readOnly
+                disabled={isEdit}
+              />
+            </div>
+            <div className="flex flex-wrap items-start gap-x-6 gap-y-3 md:col-span-2">
+              <Select
+                id="complaint-factory-response"
+                label="Factory Response"
+                wrapperClassName="w-56"
+                value={form.factoryResponse}
+                onChange={(e) => set('factoryResponse', e.target.value)}
+              >
+                <option value="">— select —</option>
+                <option value="SATISFIED">Satisfied</option>
+                <option value="DISSATISFIED">Dissatisfied</option>
+              </Select>
+              <div id="complaint-visitDate" className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                <div>
+                  <p className={LABEL}>Physical Visit</p>
+                  <div className="grid w-full max-w-[12rem] grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1" role="radiogroup" aria-label="Physical visit">
+                    {[['YES', 'Yes'], ['NO', 'No']].map(([value, text]) => {
+                      const active = form.physicalVisit === value;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          disabled={isEdit}
+                          onClick={() => {
+                            set('physicalVisit', value);
+                            if (value === 'NO') set('visitDate', '');
+                          }}
+                          className={`flex h-9 items-center justify-center rounded-lg text-theme-sm font-medium transition-all focus:outline-none focus:ring-3 focus:ring-brand-500/15 disabled:cursor-not-allowed ${
+                            active ? 'bg-white text-brand-600 shadow-theme-sm' : 'text-gray-500 hover:text-gray-700 disabled:opacity-50'
+                          }`}
+                        >
+                          {text}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+                {form.physicalVisit === 'YES' && (
+                  <TextInput
+                    id="complaint-visit-date"
+                    label={<Req>Physical Visit Date</Req>}
+                    type="date"
+                    max={today}
+                    value={form.visitDate}
+                    onChange={(e) => set('visitDate', e.target.value)}
+                    disabled={isEdit}
+                    error={errors.visitDate}
+                  />
+                )}
               </div>
-              {form.physicalVisit === 'YES' && (
-                <TextInput
-                  id="complaint-visit-date"
-                  label={<Req>Physical Visit Date</Req>}
-                  type="date"
-                  max={complaintDate}
-                  value={form.visitDate}
-                  onChange={(e) => set('visitDate', e.target.value)}
-                  error={errors.visitDate}
-                />
-              )}
             </div>
 
             {isEndCustomer && (
@@ -877,6 +1109,7 @@ function FileComplaintForm({ onReset }) {
                     placeholder="Name of the end-customer"
                     value={form.customerName}
                     onChange={(e) => set('customerName', e.target.value)}
+                    disabled={isEdit}
                     error={errors.customerName}
                   />
                 </div>
@@ -890,6 +1123,7 @@ function FileComplaintForm({ onReset }) {
                     placeholder="10-digit mobile number"
                     value={form.customerMobile}
                     onChange={(e) => set('customerMobile', e.target.value.replace(/\D/g, ''))}
+                    disabled={isEdit}
                     error={errors.customerMobile}
                   />
                 </div>
@@ -906,7 +1140,7 @@ function FileComplaintForm({ onReset }) {
                 label={<Req>Invoice Number</Req>}
                 value={form.invoiceNo}
                 onChange={(e) => set('invoiceNo', e.target.value)}
-                disabled={!dealerCode || invoicesState.loading}
+                disabled={isEdit || !dealerCode || invoicesState.loading}
                 className={errors.invoiceNo ? '!border-error-300' : ''}
               >
                 <option value="">
@@ -914,7 +1148,7 @@ function FileComplaintForm({ onReset }) {
                 </option>
                 {invoices.map((i) => (
                   <option key={i.document_number} value={i.document_number}>
-                    {i.document_number} · {formatDate(i.document_date)} · {formatRupees(i.net_amount)}
+                    {[i.document_number, i.document_date ? formatDate(i.document_date) : '', i.net_amount != null ? formatRupees(i.net_amount) : ''].filter(Boolean).join(' · ')}
                   </option>
                 ))}
               </Select>
@@ -967,7 +1201,7 @@ function FileComplaintForm({ onReset }) {
                 id="complaint-invoice-file"
                 label={<Req>Invoice Copy (Duro)</Req>}
                 title="Attach invoice"
-                hint="PDF or image"
+                hint="PDF or image · one file only"
                 accept="application/pdf,image/jpeg,image/png"
                 files={invoiceFile}
                 onChange={(f) => (setInvoiceFile(f), setErrors((e) => ({ ...e, invoiceFile: undefined })))}
@@ -978,11 +1212,12 @@ function FileComplaintForm({ onReset }) {
             <div id="complaint-photos">
               <FileDrop
                 id="complaint-photos-file"
-                label={<Req note="(at least one)">Site Photographs</Req>}
+                label={<Req note="(1 to 5)">Site Photographs</Req>}
                 title="Attach photo"
-                hint="JPEG or PNG"
+                hint="JPEG or PNG · up to 5 photos"
                 accept="image/jpeg,image/png"
                 multiple
+                maxFiles={5}
                 files={photos}
                 onChange={(f) => (setPhotos(f), setErrors((e) => ({ ...e, photos: undefined })))}
                 onReject={(m) => setErrors((e) => ({ ...e, photos: m }))}
@@ -1012,6 +1247,18 @@ function FileComplaintForm({ onReset }) {
                 className={textareaClass}
               />
             </div>
+            <div>
+              <label htmlFor="complaint-branch-remarks" className={LABEL}>Branch Remarks</label>
+              <textarea
+                id="complaint-branch-remarks"
+                rows={2}
+                maxLength={2000}
+                placeholder="Optional"
+                value={form.branchRemarks}
+                onChange={(e) => set('branchRemarks', e.target.value)}
+                className={textareaClass}
+              />
+            </div>
 
             {/* <div className="md:col-span-2">
               <FileDrop
@@ -1031,14 +1278,14 @@ function FileComplaintForm({ onReset }) {
 
         <div className="sticky bottom-3 z-10 flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white/95 p-3 shadow-theme-md backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="min-w-0 flex-1">
-            {submitError ? <Alert variant="error">{submitError}</Alert> : <p className="text-theme-sm text-gray-500">Check the details, then register the complaint.</p>}
+            {submitError ? <Alert variant="error">{submitError}</Alert> : <p className="text-theme-sm text-gray-500">{isEdit ? 'Check the details, then save the changes.' : 'Check the details, then register the complaint.'}</p>}
           </div>
           <div className="flex shrink-0 gap-3">
             <Button type="button" variant="secondary" onClick={() => toHistory()} disabled={isSaving}>
               Cancel
             </Button>
             <Button type="submit" isLoading={isSaving}>
-              Register Complaint
+              {isEdit ? 'Save changes' : 'Register Complaint'}
             </Button>
           </div>
         </div>

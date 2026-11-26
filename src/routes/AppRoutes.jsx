@@ -58,6 +58,7 @@ function moduleRoutes() {
     // first page this person may use.
     <Route key="complaints" path="complaints" element={<ComplaintsPage />} />,
     <Route key="complaints-new" path="complaints/new" element={<FileComplaintPage />} />,
+    <Route key="complaints-edit" path="complaints/edit/:id" element={<FileComplaintPage />} />,
     <Route key="complaints-history" path="complaints/history" element={<ComplaintHistoryPage />} />,
     <Route key="complaints-approvals" path="complaints/approvals" element={<ComplaintApprovalsPage />} />,
     <Route key="complaints-settings" path="complaints/settings" element={<ComplaintSettingsPage />} />,

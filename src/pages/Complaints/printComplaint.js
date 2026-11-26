@@ -47,7 +47,7 @@ export function complaintToPrint(row, statusLabel, extra = {}) {
     visitDate: row.physical_visit_date,
     invoiceNo: row.invoice_no,
     invoiceDate: row.invoice_date,
-    factory: row.manufacturing_factory,
+    factory: /trading/i.test(row.manufacturing_factory || '') ? '' : row.manufacturing_factory,
     amount: row.amount,
     lines: lines.map((l) => ({
       ...l,
@@ -60,6 +60,10 @@ export function complaintToPrint(row, statusLabel, extra = {}) {
     photoNames: (row.photo_paths || []).map(fileName),
     extraNames: (row.extra_paths || []).map(fileName),
     remarks: row.remarks,
+    branchRemarks: row.branch_remarks,
+    targetCloseDate: row.target_close_date,
+    actualCloseDate: row.actual_close_date,
+    factoryResponse: { SATISFIED: 'Satisfied', DISSATISFIED: 'Dissatisfied' }[row.factory_response] || '',
     routing: statusLabel ? `Status: ${statusLabel}.` : '',
   };
 }
@@ -122,6 +126,8 @@ export async function downloadComplaint(c) {
   pairs('STATUS & APPROVAL', [
     ['Status', c.status],
     ['Filed On', c.filedAt || formatDate(c.complaintDate)],
+    ['Target Close Date', c.targetCloseDate ? formatDate(c.targetCloseDate) : ''],
+    ['Actual Close Date', c.actualCloseDate ? formatDate(c.actualCloseDate) : ''],
     ['Current Stage', c.stage],
     ['Manager Level', c.managerLevel ? `Level ${c.managerLevel}${c.requestedLevel && c.requestedLevel !== c.managerLevel ? ` (band asked for level ${c.requestedLevel})` : ''}` : ''],
     ['Approved On', c.approvedAt],
@@ -192,6 +198,8 @@ export async function downloadComplaint(c) {
     // The filing form no longer asks for this. Print it only on older complaints that have it.
     ...(c.installation ? [['Installation Context', c.installation]] : []),
     ['Dealer / Customer Remarks', c.remarks],
+    ['Branch Remarks', c.branchRemarks],
+    ['Factory Response', c.factoryResponse],
   ]);
 
   // Footer on every page

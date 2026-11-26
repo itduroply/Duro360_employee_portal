@@ -5,7 +5,7 @@ import { CloseIcon } from './icons.jsx';
 // Centered dialog on a dimmed backdrop. Esc, the ✕ or a click outside call
 // onClose, unless `locked` (e.g. while saving). The body scrolls when tall;
 // `footer` stays pinned under it.
-export default function Modal({ open, title, subtitle, icon, onClose, locked = false, size = 'md', footer, children }) {
+export default function Modal({ open, title, subtitle, icon, onClose, locked = false, size = 'md', footer, headerExtra, children }) {
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && !locked && onClose();
@@ -39,6 +39,7 @@ export default function Modal({ open, title, subtitle, icon, onClose, locked = f
               {subtitle && <p className="text-theme-sm text-gray-500">{subtitle}</p>}
             </div>
           </div>
+          {headerExtra && <div className="ml-auto min-w-0">{headerExtra}</div>}
           <button
             type="button"
             onClick={onClose}

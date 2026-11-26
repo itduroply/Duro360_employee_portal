@@ -11,7 +11,7 @@ const COLUMNS =
   'installation_context, remarks, invoice_path, photo_paths, extra_paths, ' +
   'current_approver_id, current_approver_name, manager_level, requested_level, rejection_reason, approved_at';
 // Added by migrations 20261124120000_complaint_register_details.sql and 20261124130000_complaint_edit.sql.
-const DETAIL_COLUMNS = ', complaint_date, dealer_mobile, dealer_email, physical_visit, physical_visit_date, manufacturing_factory, version, edited_at, edited_by_name';
+const DETAIL_COLUMNS = ', complaint_date, dealer_mobile, dealer_email, physical_visit, physical_visit_date, manufacturing_factory, version, edited_at, edited_by_name, branch_remarks, factory_response, target_close_date, actual_close_date';
 
 // Every status a complaint can hold. The first three are the approval flow
 // (migration 20261112130000); the rest are older statuses still on file.
@@ -152,7 +152,7 @@ export const complaintsApi = {
   // Uploads every file to <new id>/, then registers the complaint. A new id is
   // made on every attempt, so a retry never collides with files left by a
   // failed one. Returns the complaint number.
-  async file({ invoiceFile, photoFiles, extraFiles, ...complaint }) {
+  async file({ invoiceFile, photoFiles, extraFiles, branchRemarks, factoryResponse, ...complaint }) {
     const id = crypto.randomUUID();
     const invoicePath = `${id}/invoice.${extension(invoiceFile)}`;
     const photoPaths = photoFiles.map((f, i) => `${id}/photo-${i + 1}.${extension(f)}`);
@@ -172,7 +172,24 @@ export const complaintsApi = {
       complaint: { ...complaint, id, invoice_path: invoicePath, photo_paths: photoPaths, extra_paths: extraPaths },
     });
     fail(error);
-    return data;
+    // Branch remarks are saved right after filing. The complaint is already
+    // registered, so a failure here is reported but does not undo it.
+    let branchRemarksError = '';
+    if (String(branchRemarks ?? '').trim()) {
+      try {
+        await this.setBranchRemarks(id, branchRemarks, false);
+      } catch (err) {
+        branchRemarksError = err.message || 'Branch remarks could not be saved.';
+      }
+    }
+    if (factoryResponse) {
+      try {
+        await this.setFactoryResponse(id, factoryResponse, false);
+      } catch (err) {
+        branchRemarksError ||= err.message || 'Factory response could not be saved.';
+      }
+    }
+    return { complaintNo: data, id, branchRemarksError };
   },
 
   // ── Approvals ───────────────────────────────────────────────
@@ -253,7 +270,7 @@ export const complaintsApi = {
   },
   // The filer's edit. `invoice`, `photos` and `extras` hold either a stored
   // path (kept as it is) or a File (uploaded to the complaint's folder first).
-  async update({ id, amount, remarks, physicalVisit, visitDate, lineDefects, invoice, photos, extras }) {
+  async update({ id, amount, remarks, branchRemarks, factoryResponse, physicalVisit, visitDate, lineDefects, invoice, photos, extras }) {
     const stamp = Date.now();
     let n = 0;
     const store = async (item, label) => {
@@ -283,6 +300,21 @@ export const complaintsApi = {
         extra_paths: extraPaths,
       },
     });
+    fail(error);
+    const saved = await this.setBranchRemarks(id, branchRemarks ?? '', true);
+    const response = await this.setFactoryResponse(id, factoryResponse ?? '', true);
+    return { ...data, changed: Boolean(data?.changed || saved?.changed || response?.changed) };
+  },
+  // Branch remarks (migration 20261126120000_complaint_branch_remarks.sql). `isEdit`
+  // false is the first save after filing: nothing is logged.
+  async setBranchRemarks(id, remarks, isEdit = true) {
+    const { data, error } = await supabase.rpc('complaint_set_branch_remarks', { p_complaint: id, p_remarks: remarks, p_is_edit: isEdit });
+    fail(error);
+    return data;
+  },
+  // Factory response: '', SATISFIED or DISSATISFIED (migration 20261126130000_complaint_factory_response.sql).
+  async setFactoryResponse(id, response, isEdit = true) {
+    const { data, error } = await supabase.rpc('complaint_set_factory_response', { p_complaint: id, p_response: response, p_is_edit: isEdit });
     fail(error);
     return data;
   },

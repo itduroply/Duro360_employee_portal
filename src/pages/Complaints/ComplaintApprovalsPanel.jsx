@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Alert from '../../components/common/Alert.jsx';
 import Button from '../../components/common/Button.jsx';
 import Modal from '../../components/common/Modal.jsx';
@@ -8,8 +9,6 @@ import { complaintsApi, COMPLAINT_STATUS_LABEL } from '../../api/complaintsApi';
 import { formatDate, formatDateTime } from '../../utils/format.js';
 import { complaintToPrint, downloadComplaint } from './printComplaint.js';
 import { Req, TextArea, useList } from '../../modules/creditApproval/components.jsx';
-
-const EditComplaintModal = lazy(() => import('./EditComplaintModal.jsx'));
 
 // The inbox loads again on this timer, so a complaint a colleague just filed
 // shows up without a page reload.
@@ -31,11 +30,15 @@ function Item({ label, value }) {
 const FIELD_LABEL = {
   amount: 'Amount',
   remarks: 'Remarks',
+  branch_remarks: 'Branch remarks',
+  factory_response: 'Factory response',
   physical_visit: 'Physical visit',
   invoice_copy: 'Invoice copy',
   photos: 'Site photographs',
   documents: 'Additional documents',
 };
+
+const FACTORY_RESPONSE = { SATISFIED: 'Satisfied', DISSATISFIED: 'Dissatisfied' };
 
 const shown = (v) => (v === null || v === undefined || v === '' ? '—' : String(v));
 
@@ -58,6 +61,8 @@ function describeEdit(changes) {
       const t = value.to || {};
       const text = (x) => (x.visit ? `Yes${x.date ? ` (${formatDate(x.date)})` : ''}` : 'No');
       out.push(`Physical visit: ${text(f)} → ${text(t)}`);
+    } else if (key === 'factory_response') {
+      out.push(`Factory response: ${shown(FACTORY_RESPONSE[value.from])} → ${shown(FACTORY_RESPONSE[value.to])}`);
     } else if (key === 'invoice_copy') {
       out.push('Invoice copy replaced');
     } else if (key === 'photos' || key === 'documents') {
@@ -163,12 +168,28 @@ export function canDecide(complaint, user, access) {
 
 // Everything on one complaint, read only: the form, the product lines, the
 // evidence files and the decisions taken so far.
-export function ComplaintDetails({ complaint, onChanged }) {
+// The status tag shown in a modal's title row.
+export function StageTag({ text }) {
+  if (!text) return null;
+  // Green once approved, red once rejected, amber while it waits on someone.
+  const tone = text.startsWith('Approved')
+    ? 'border-success-200 bg-success-50 text-success-700'
+    : text.startsWith('Rejected')
+      ? 'border-error-200 bg-error-50 text-error-700'
+      : 'border-warning-200 bg-warning-50 text-warning-700';
+  return (
+    <span className={`inline-block max-w-[300px] truncate rounded-full border px-3.5 py-1.5 text-theme-sm font-semibold shadow-theme-xs ${tone}`} title={text}>
+      Status: {text}
+    </span>
+  );
+}
+
+export function ComplaintDetails({ complaint, onChanged, onStage }) {
   const [files, setFiles] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [rights, setRights] = useState(null);
   const [editLog, setEditLog] = useState([]);
-  const [editing, setEditing] = useState(false);
+  const navigate = useNavigate();
   const [commentText, setCommentText] = useState('');
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentError, setCommentError] = useState('');
@@ -215,6 +236,22 @@ export function ComplaintDetails({ complaint, onChanged }) {
       ? 'Waiting on the accounts team'
       : null;
 
+  // Where the complaint stands now: who holds it, or who took the last decision.
+  const lastDecision = decisions.length > 0 ? decisions[decisions.length - 1] : null;
+  const currentStage = complaint.status === 'PENDING_MANAGER'
+    ? `Pending with ${complaint.current_approver_name || 'the reporting manager'}`
+    : complaint.status === 'PENDING_ACCOUNTS'
+      ? 'Pending with the accounts team'
+      : lastDecision
+        ? `${lastDecision.decision === 'APPROVED' ? 'Approved' : 'Rejected'} by ${lastDecision.approver_name || '—'} (${lastDecision.stage === 'ACCOUNTS' ? 'accounts team' : `manager level ${lastDecision.manager_level ?? '—'}`})`
+        : '';
+
+  // Lets the modal show the status in its title row.
+  useEffect(() => {
+    onStage?.(currentStage);
+    return () => onStage?.('');
+  }, [currentStage, onStage]);
+
   async function saveComment() {
     setCommentBusy(true);
     setCommentError('');
@@ -231,34 +268,13 @@ export function ComplaintDetails({ complaint, onChanged }) {
 
   return (
     <div>
-      {editing && (
-        <Suspense fallback={null}>
-          <EditComplaintModal
-            complaint={complaint}
-            onClose={() => setEditing(false)}
-            onSaved={(result) => {
-              setEditing(false);
-              setEditNotice(
-                !result?.changed
-                  ? 'Nothing changed.'
-                  : result.rerouted
-                    ? `Complaint updated. It now goes to ${result.waitingOn || 'a different approver'} for approval.`
-                    : 'Complaint updated. The approver sees the latest details.'
-              );
-              // A new approver has not heard of this complaint yet: mail them (best effort).
-              if (result?.rerouted) complaintsApi.notifyFiled(result.complaintNo).catch(() => {});
-              onChanged?.();
-            }}
-          />
-        </Suspense>
-      )}
       {editNotice && <Alert variant="success" className="mb-5">{editNotice}</Alert>}
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <span className="text-theme-sm font-semibold text-gray-800">{complaint.complaint_no}</span>
         <StatusChip status={COMPLAINT_STATUS_LABEL[complaint.status] || complaint.status} />
         <span className="text-theme-xs text-gray-500">Filed {formatDateTime(complaint.created_at)} by {complaint.filed_by_name || '—'}</span>
         {rights?.canEditComplaint && (
-          <Button variant="secondary" size="sm" className="ml-auto" onClick={() => setEditing(true)}>
+          <Button variant="secondary" size="sm" className="ml-auto" onClick={() => navigate(`../edit/${complaint.id}`, { relative: 'path' })}>
             Edit complaint
           </Button>
         )}
@@ -271,6 +287,11 @@ export function ComplaintDetails({ complaint, onChanged }) {
         >
           Download PDF
         </Button>
+        {currentStage && !onStage && (
+          <span className="rounded-full bg-gray-100 px-3 py-1 text-theme-xs font-medium text-gray-700" title={currentStage}>
+            Status: {currentStage}
+          </span>
+        )}
       </div>
       {downloadError && <Alert variant="error" className="mb-5">{downloadError}</Alert>}
       {complaint.edited_at && (
@@ -387,7 +408,11 @@ export function ComplaintDetails({ complaint, onChanged }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {/* The filing form no longer asks for this. Show it only on older complaints that have it. */}
           {complaint.installation_context && <Item label="Installation" value={complaint.installation_context} />}
-          <Item label="Remarks" value={complaint.remarks} />
+          <Item label="Dealer / Customer Remarks" value={complaint.remarks} />
+          <Item label="Branch Remarks" value={complaint.branch_remarks} />
+          <Item label="Target Close Date" value={complaint.target_close_date ? formatDate(complaint.target_close_date) : ''} />
+          <Item label="Actual Close Date" value={complaint.actual_close_date ? formatDate(complaint.actual_close_date) : ''} />
+          <Item label="Factory Response" value={FACTORY_RESPONSE[complaint.factory_response]} />
         </div>
       </Section>
 
@@ -495,6 +520,8 @@ export default function ComplaintApprovalsPanel({ onChanged }) {
     if (viewId) loadViewed(viewId);
   }, [viewId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [notice, setNotice] = useState('');
+  const [openStage, setOpenStage] = useState('');
+  const [viewStage, setViewStage] = useState('');
 
   const pending = inbox.data ?? [];
   const open = useMemo(() => pending.find((c) => c.id === selected) ?? null, [pending, selected]);
@@ -566,10 +593,10 @@ export default function ComplaintApprovalsPanel({ onChanged }) {
         empty={{ icon: 'complaints', title: history.loading ? 'Loading…' : 'You have not decided any complaint yet' }}
       />
 
-      <Modal open={Boolean(open)} size="xl" title={open ? open.dealer_name : ''} subtitle={open ? `Complaint ${open.complaint_no}` : ''} onClose={() => setSelected(null)}>
+      <Modal open={Boolean(open)} size="xl" title={open ? open.dealer_name : ''} subtitle={open ? `Complaint ${open.complaint_no}` : ''} onClose={() => setSelected(null)} headerExtra={<StageTag text={openStage} />}>
         {open && (
           <>
-            <ComplaintDetails complaint={open} onChanged={() => inbox.reload(true)} />
+            <ComplaintDetails complaint={open} onChanged={() => inbox.reload(true)} onStage={setOpenStage} />
             <DecisionForm
               complaint={open}
               onDone={(result) => {
@@ -584,12 +611,13 @@ export default function ComplaintApprovalsPanel({ onChanged }) {
         )}
       </Modal>
 
-      <Modal open={Boolean(viewId)} size="xl" title={viewed ? viewed.dealer_name : 'Complaint'} subtitle={viewed ? `Complaint ${viewed.complaint_no}` : ''} onClose={() => setViewId(null)}>
+      <Modal open={Boolean(viewId)} size="xl" title={viewed ? viewed.dealer_name : 'Complaint'} subtitle={viewed ? `Complaint ${viewed.complaint_no}` : ''} onClose={() => setViewId(null)} headerExtra={<StageTag text={viewStage} />}>
         {viewError && <Alert variant="error">{viewError}</Alert>}
         {!viewed && !viewError && <p className="text-theme-sm text-gray-500">Loading…</p>}
         {viewed && (
           <ComplaintDetails
             complaint={viewed}
+            onStage={setViewStage}
             onChanged={() => {
               loadViewed(viewId);
               history.reload(true);

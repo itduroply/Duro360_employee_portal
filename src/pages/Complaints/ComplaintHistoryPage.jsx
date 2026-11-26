@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import ModulePage, { KpiStrip, StatusChip } from '../../components/ModulePage/ModulePage.jsx';
 import EmptyState from '../../components/ModulePage/EmptyState.jsx';
@@ -11,10 +11,9 @@ import { complaintsApi, COMPLAINT_STATUS_LABEL } from '../../api/complaintsApi';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { formatCount, formatDate } from '../../utils/format.js';
 import { TABLE_WRAPPER, TABLE, TABLE_HEAD, TH, TABLE_ROW, TD, TD_PRIMARY, TABLE_EMPTY, CHIP_LIGHT, CHIP_NEUTRAL } from '../../components/common/tableStyles.js';
-import { ComplaintDetails, DecisionForm, canDecide } from './ComplaintApprovalsPanel.jsx';
+import { ComplaintDetails, DecisionForm, StageTag, canDecide } from './ComplaintApprovalsPanel.jsx';
 import ComplaintGate, { useComplaintRights } from './ComplaintGate.jsx';
 
-const EditComplaintModal = lazy(() => import('./EditComplaintModal.jsx'));
 
 const PAGE_SIZE = 10;
 const ORIGIN_LABEL = { DEALER: 'Dealer', END_CUSTOMER: 'End-Customer' };
@@ -93,13 +92,13 @@ function ComplaintHistory() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
-  const [decisionNotice, setDecisionNotice] = useState('');
-  const [editRow, setEditRow] = useState(null);
+  const [decisionNotice, setDecisionNotice] = useState(location.state?.notice ?? '');
+  const [stageText, setStageText] = useState('');
   const open = rows.find((c) => c.id === selectedId) ?? null;
 
   // The "just filed" note is read once, so a page refresh does not show it again.
   useEffect(() => {
-    if (location.state?.filed) navigate(location.pathname, { replace: true, state: null });
+    if (location.state?.filed || location.state?.notice) navigate(location.pathname, { replace: true, state: null });
   }, [location.state, location.pathname, navigate]);
 
   // Search waits for a short pause in typing.
@@ -276,7 +275,7 @@ function ComplaintHistory() {
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setEditRow(c);
+                            navigate(`../edit/${c.id}`, { relative: 'path' });
                           }}
                         >
                           Edit
@@ -301,33 +300,17 @@ function ComplaintHistory() {
         )}
       </div>
 
-      {editRow && (
-        <Suspense fallback={null}>
-          <EditComplaintModal
-            complaint={editRow}
-            onClose={() => setEditRow(null)}
-            onSaved={(result) => {
-              setEditRow(null);
-              setDecisionNotice(
-                !result?.changed
-                  ? 'Nothing changed.'
-                  : result.rerouted
-                    ? `Complaint ${result.complaintNo} updated. It now goes to ${result.waitingOn || 'a different approver'} for approval.`
-                    : `Complaint ${result.complaintNo} updated.`
-              );
-              // A new approver has not heard of this complaint yet: mail them (best effort).
-              if (result?.rerouted) complaintsApi.notifyFiled(result.complaintNo).catch(() => {});
-              load();
-              refresh();
-            }}
-          />
-        </Suspense>
-      )}
-
-      <Modal open={Boolean(open)} size="xl" title={open ? open.dealer_name : ''} subtitle={open ? `Complaint ${open.complaint_no}` : ''} onClose={() => setSelectedId(null)}>
+      <Modal
+        open={Boolean(open)}
+        size="xl"
+        title={open ? open.dealer_name : ''}
+        subtitle={open ? `Complaint ${open.complaint_no}` : ''}
+        onClose={() => setSelectedId(null)}
+        headerExtra={<StageTag text={stageText} />}
+      >
         {open && (
           <>
-            <ComplaintDetails complaint={open} onChanged={() => (load(), refresh())} />
+            <ComplaintDetails complaint={open} onChanged={() => (load(), refresh())} onStage={setStageText} />
             {canDecide(open, user, access) && (
               <DecisionForm
                 complaint={open}

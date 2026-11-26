@@ -325,8 +325,8 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
       ...f,
       dealerCode: customer.code,
       dealerName: customer.name,
-      assignedLimit: customer.creditLimit == null ? '' : String(customer.creditLimit),
-      assignedDays: customer.creditDays == null ? '' : String(customer.creditDays),
+      assignedLimit: customer.creditLimit == null ? '0' : String(customer.creditLimit),
+      assignedDays: customer.creditDays == null ? '0' : String(customer.creditDays),
       ...Object.fromEntries(AGEING_BUCKETS.map((b, i) => [b.key, String(ageing[i])])),
       totalOutstanding: String(total),
       // Another dealer has its own payment record. The same dealer keeps what was typed.
