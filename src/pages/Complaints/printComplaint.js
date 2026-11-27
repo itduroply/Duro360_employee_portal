@@ -10,6 +10,7 @@ const fileName = (p) => String(p || '').split('/').pop();
 const rupees = (v) => `Rs. ${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 function stageText(row) {
+  if (row.status === 'PENDING_COORDINATOR') return 'Waiting on the Complaint Coordinator';
   if (row.status === 'PENDING_MANAGER') return `Waiting on ${row.current_approver_name || 'the reporting manager'}`;
   if (row.status === 'PENDING_ACCOUNTS') return 'Waiting on the accounts team';
   return '';
@@ -180,7 +181,7 @@ export async function downloadComplaint(c) {
       body: c.decisions.map((d) => [
         d.decision === 'APPROVED' ? 'Approved' : 'Rejected',
         text(d.approver_name),
-        d.stage === 'ACCOUNTS' ? 'Accounts team' : `Manager level ${text(d.manager_level)}`,
+        d.stage === 'COORDINATOR' ? 'Complaint Coordinator' : d.stage === 'ACCOUNTS' ? 'Accounts team' : `Manager level ${text(d.manager_level)}`,
         d.decided_at ? formatDateTime(d.decided_at) : '—',
         text(d.reason),
       ]),

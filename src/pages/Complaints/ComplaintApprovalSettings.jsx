@@ -15,12 +15,74 @@ const withCommas = (value) => {
 
 const stripCommas = (value) => String(value ?? '').replace(/[^\d.]/g, '');
 
+// A list of people with a finder, used for the Complaint Coordinators and the accounts team.
+function TeamCard({ id, title, description, emptyText, members, setMembers, people }) {
+  const [pick, setPick] = useState('');
+  const [query, setQuery] = useState('');
+  const chosen = useMemo(() => new Set(members.map((m) => m.id)), [members]);
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return people
+      .filter((p) => !chosen.has(p.id))
+      .filter((p) => !q || [p.name, p.email, p.employee_id].some((v) => String(v ?? '').toLowerCase().includes(q)))
+      .slice(0, 50);
+  }, [people, chosen, query]);
+
+  function addMember() {
+    const p = people.find((x) => x.id === pick);
+    if (!p) return;
+    setMembers((list) => [...list, { id: p.id, name: p.name, email: p.email, employeeId: p.employee_id, active: true }]);
+    setPick('');
+  }
+
+  return (
+    <div className={TABLE_WRAPPER}>
+      <div className="px-5 py-4 sm:px-6">
+        <h3 className="text-base font-semibold text-gray-800">{title}</h3>
+        <p className="mt-1 text-theme-xs text-gray-500">{description}</p>
+      </div>
+      <div className="px-5 pb-4 sm:px-6">
+        {members.length === 0 && <p className="mb-3 text-theme-sm text-warning-700">{emptyText}</p>}
+        <ul className="mb-4 flex flex-wrap gap-2">
+          {members.map((m) => (
+            <li key={m.id} className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3 py-1 text-theme-sm">
+              <span className="font-medium text-gray-800">{m.name}</span>
+              <span className="text-gray-500">{m.employeeId || m.email}</span>
+              {m.active === false && <span className="text-error-500">inactive</span>}
+              <button type="button" aria-label={`Remove ${m.name}`} className="text-gray-400 hover:text-error-500" onClick={() => setMembers((list) => list.filter((x) => x.id !== m.id))}>
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <div>
+            <label className={LABEL} htmlFor={`${id}-search`}>Find a person</label>
+            <input id={`${id}-search`} className={INPUT} placeholder="Name, email or employee code" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </div>
+          <div>
+            <label className={LABEL} htmlFor={`${id}-pick`}>Add to {title.toLowerCase()}</label>
+            <select id={`${id}-pick`} className={INPUT} value={pick} onChange={(e) => setPick(e.target.value)}>
+              <option value="">Select…</option>
+              {candidates.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.employee_id || p.email}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button variant="secondary" onClick={addMember} disabled={!pick}>Add</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ComplaintApprovalSettings() {
   const [bands, setBands] = useState([]);
   const [members, setMembers] = useState([]);
+  const [coordinators, setCoordinators] = useState([]);
   const [people, setPeople] = useState([]);
-  const [pick, setPick] = useState('');
-  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true); 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -33,6 +95,7 @@ export default function ComplaintApprovalSettings() {
         if (cancelled) return;
         setBands(settings.bands.map((b) => ({ ...b, minAmount: String(b.minAmount), maxAmount: b.maxAmount === null ? '' : String(b.maxAmount), managerLevel: String(b.managerLevel) })));
         setMembers(settings.members);
+        setCoordinators(settings.coordinators ?? []);
         const all = [...(employees.users ?? []), ...(admins.users ?? [])].filter((u) => u.status === 'ACTIVE');
         setPeople(all);
       })
@@ -42,15 +105,6 @@ export default function ComplaintApprovalSettings() {
       cancelled = true;
     };
   }, []);
-
-  const chosen = useMemo(() => new Set(members.map((m) => m.id)), [members]);
-  const candidates = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return people
-      .filter((p) => !chosen.has(p.id))
-      .filter((p) => !q || [p.name, p.email, p.employee_id].some((v) => String(v ?? '').toLowerCase().includes(q)))
-      .slice(0, 50);
-  }, [people, chosen, query]);
 
   function setBand(index, field, value) {
     setBands((list) => list.map((b, i) => (i === index ? { ...b, [field]: value } : b)));
@@ -62,13 +116,6 @@ export default function ComplaintApprovalSettings() {
     setBands((list) => [...list, { minAmount: from, maxAmount: '', managerLevel: String((Number(last?.managerLevel) || 0) + 1) }]);
   }
 
-  function addMember() {
-    const p = people.find((x) => x.id === pick);
-    if (!p) return;
-    setMembers((list) => [...list, { id: p.id, name: p.name, email: p.email, employeeId: p.employee_id, active: true }]);
-    setPick('');
-  }
-
   async function save() {
     setSaving(true);
     setError('');
@@ -77,6 +124,7 @@ export default function ComplaintApprovalSettings() {
       const result = await complaintsApi.saveSettings({
         bands: bands.map((b) => ({ minAmount: stripCommas(b.minAmount), maxAmount: stripCommas(b.maxAmount), managerLevel: b.managerLevel })),
         memberIds: members.map((m) => m.id),
+        coordinatorIds: coordinators.map((m) => m.id),
       });
       setNotice(result.message);
     } catch (err) {
@@ -96,10 +144,7 @@ export default function ComplaintApprovalSettings() {
       <div className={TABLE_WRAPPER}>
         <div className="px-5 py-4 sm:px-6">
           <h3 className="text-base font-semibold text-gray-800">Amount bands</h3>
-          <p className="mt-1 text-theme-xs text-gray-500">
-            Level 1 is the filer's own reporting manager, level 2 is that manager's manager, and so on. Leave "To" empty for no upper limit.
-            A band change applies to complaints filed after it is saved.
-          </p>
+          
         </div>
         <div className="custom-scrollbar overflow-x-auto">
           <table className={TABLE}>
@@ -138,45 +183,24 @@ export default function ComplaintApprovalSettings() {
         </div>
       </div>
 
-      <div className={TABLE_WRAPPER}>
-        <div className="px-5 py-4 sm:px-6">
-          <h3 className="text-base font-semibold text-gray-800">Accounts team</h3>
-          <p className="mt-1 text-theme-xs text-gray-500">Any one of these people can give the accounts approval. They see the complaint under My approvals.</p>
-        </div>
-        <div className="px-5 pb-4 sm:px-6">
-          {members.length === 0 && <p className="mb-3 text-theme-sm text-warning-700">No member yet. Complaints approved by a manager will wait until someone is added.</p>}
-          <ul className="mb-4 flex flex-wrap gap-2">
-            {members.map((m) => (
-              <li key={m.id} className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-3 py-1 text-theme-sm">
-                <span className="font-medium text-gray-800">{m.name}</span>
-                <span className="text-gray-500">{m.employeeId || m.email}</span>
-                {m.active === false && <span className="text-error-500">inactive</span>}
-                <button type="button" aria-label={`Remove ${m.name}`} className="text-gray-400 hover:text-error-500" onClick={() => setMembers((list) => list.filter((x) => x.id !== m.id))}>
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-            <div>
-              <label className={LABEL} htmlFor="accounts-search">Find a person</label>
-              <input id="accounts-search" className={INPUT} placeholder="Name, email or employee code" value={query} onChange={(e) => setQuery(e.target.value)} />
-            </div>
-            <div>
-              <label className={LABEL} htmlFor="accounts-pick">Add to accounts team</label>
-              <select id="accounts-pick" className={INPUT} value={pick} onChange={(e) => setPick(e.target.value)}>
-                <option value="">Select…</option>
-                {candidates.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {p.employee_id || p.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Button variant="secondary" onClick={addMember} disabled={!pick}>Add</Button>
-          </div>
-        </div>
-      </div>
+      <TeamCard
+        id="coordinators"
+        title="Complaint Coordinators"
+        emptyText="No Coordinator yet. Filed complaints will wait until someone is added."
+        members={coordinators}
+        setMembers={setCoordinators}
+        people={people}
+      />
+
+      <TeamCard
+        id="accounts"
+        title="Accounts team"
+        description="Any one of these people can give the final accounts approval. They see the complaint under My approvals."
+        emptyText="No member yet. Complaints approved by a manager will wait until someone is added."
+        members={members}
+        setMembers={setMembers}
+        people={people}
+      />
 
       <div className="flex justify-end">
         <Button onClick={save} isLoading={saving}>Save settings</Button>

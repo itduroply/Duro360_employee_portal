@@ -201,8 +201,20 @@ function ComplaintsIcon() {
   );
 }
 
+// Wallet: expense claims.
+function ExpenseIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-6 w-6" aria-hidden="true">
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h10A1.5 1.5 0 0 1 16 6.5V8" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <rect x="2.5" y="7.5" width="15" height="9" rx="1.8" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="13.6" cy="12" r="1.1" fill="currentColor" />
+    </svg>
+  );
+}
+
 // Looked up by item.key — see sidebarConfig.js for the canonical key list.
 export const NAV_ICONS = {
+  expense: ExpenseIcon,
   dashboard: DashboardIcon,
   dealers: DealersIcon,
   orders: OrdersIcon,

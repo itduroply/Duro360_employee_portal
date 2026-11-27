@@ -12,6 +12,17 @@ export const SIDEBAR_FEATURES = [
   // { key: 'documents', label: 'Dealer Documents', path: 'documents', implemented: true },
   { key: 'queries', label: 'Dealer Queries', path: 'queries', implemented: true },
   { key: 'complaints', label: 'Complaints', path: 'complaints', implemented: true },
+  // Expense is open to every employee (BRD: all employees raise claims), so it
+  // is alwaysVisible and not an assignable permission.
+  {
+    key: 'expense', label: 'Expense', path: 'expense', implemented: true, alwaysVisible: true,
+    children: [
+      { key: 'expenseNew', label: 'New Claim', path: 'expense/new', implemented: true },
+      { key: 'expenseClaims', label: 'My Claims', path: 'expense/claims', implemented: true },
+      { key: 'expenseAdvances', label: 'Advances', path: 'expense/advances', implemented: true },
+      { key: 'expenseTravel', label: 'Travel Requests', path: 'expense/travel', implemented: true },
+    ],
+  },
   { key: 'notifications', label: 'Notifications', path: 'notifications', implemented: true },
   { key: 'reports', label: 'Reports', path: 'reports', implemented: true },
   { key: 'auditLogs', label: 'Audit Logs', path: 'audit-logs', implemented: true },
@@ -74,7 +85,7 @@ export const COMPLAINT_PAGES = [
 // that is still loading, `fallbackCanFile` (the complaints permission) is used.
 export function complaintRights({ isSuperAdmin = false, access = null, fallbackCanFile = false } = {}) {
   const canFile = isSuperAdmin || (access ? Boolean(access.canFile) : fallbackCanFile);
-  const canApprove = isSuperAdmin || Boolean(access && (access.isAccounts || access.pending > 0 || access.hasHistory));
+  const canApprove = isSuperAdmin || Boolean(access && (access.isAccounts || access.isCoordinator || access.pending > 0 || access.hasHistory));
   return { canFile, canApprove, isSuperAdmin, pending: access?.pending ?? 0 };
 }
 

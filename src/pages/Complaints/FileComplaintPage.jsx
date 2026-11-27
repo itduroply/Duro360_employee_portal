@@ -80,15 +80,6 @@ function formFromComplaint(c) {
 // Today's date in India as YYYY-MM-DD. This is the complaint date.
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
-// The complaint should close within 30 days of its date.
-export const CLOSE_WITHIN_DAYS = 30;
-export function addDays(iso, days) {
-  if (!iso) return '';
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 // A nature of "Other" is saved as "Other: <reason>".
 export const OTHER = 'Other';
 export const natureText = (nature, other) => (nature === OTHER ? `${OTHER}: ${String(other ?? '').trim()}` : nature || '');
@@ -495,7 +486,7 @@ function FileComplaintForm({ onReset }) {
   // Only what the filer may still change stays open; the rest is locked.
   const { id: editId } = useParams();
   const isEdit = Boolean(editId);
-  const [editState, setEditState] = useState({ loading: isEdit, error: '', complaintNo: '', complaintDate: '', actualCloseDate: '' });
+  const [editState, setEditState] = useState({ loading: isEdit, error: '', complaintNo: '', complaintDate: '' });
   const toHistory = (state) => navigate(isEdit ? '../../history' : '../history', { relative: 'path', state });
   const [done, setDone] = useState(null); // set once the complaint is saved: drives the success dialog
   const [downloadError, setDownloadError] = useState('');
@@ -517,7 +508,6 @@ function FileComplaintForm({ onReset }) {
   const [extras, setExtras] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState('');
-  const [originNotice, setOriginNotice] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const [branches, setBranches] = useState([]);
@@ -546,16 +536,7 @@ function FileComplaintForm({ onReset }) {
     setExtras([]);
     setErrors({});
     setSubmitError('');
-    setOriginNotice(`Switched to ${ORIGINS.find((o) => o.value === next)?.title}. The form has been reset.`);
-    document.getElementById('file-complaint-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-
-  // The switch note goes away by itself.
-  useEffect(() => {
-    if (!originNotice) return undefined;
-    const timer = setTimeout(() => setOriginNotice(''), 6000);
-    return () => clearTimeout(timer);
-  }, [originNotice]);
 
   // The selling branches come from Assign Users: the database returns only the
   // branches this person is tagged with (every branch if none are tagged). The
@@ -563,7 +544,7 @@ function FileComplaintForm({ onReset }) {
   useEffect(() => {
     let cancelled = false;
     if (isEdit) {
-      setEditState({ loading: true, error: '', complaintNo: '', complaintDate: '', actualCloseDate: '' });
+      setEditState({ loading: true, error: '', complaintNo: '', complaintDate: '' });
       Promise.all([complaintsApi.get(editId), complaintsApi.editRights(editId)])
         .then(([row, rights]) => {
           if (cancelled) return;
@@ -586,7 +567,6 @@ function FileComplaintForm({ onReset }) {
             error: '',
             complaintNo: row.complaint_no,
             complaintDate: row.complaint_date || new Date(row.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
-            actualCloseDate: row.actual_close_date || '',
           });
           // Zone and billing branch are not saved on the complaint. Read them
           // from the same lookups the filing form uses; the form works without them.
@@ -605,7 +585,7 @@ function FileComplaintForm({ onReset }) {
             })
             .catch(() => {});
         })
-        .catch((err) => !cancelled && setEditState({ loading: false, error: err.message || 'Could not open this complaint.', complaintNo: '', complaintDate: '', actualCloseDate: '' }));
+        .catch((err) => !cancelled && setEditState({ loading: false, error: err.message || 'Could not open this complaint.', complaintNo: '', complaintDate: '' }));
       return () => {
         cancelled = true;
       };
@@ -841,7 +821,6 @@ function FileComplaintForm({ onReset }) {
         complaintNo,
         message,
         complaintDate,
-        targetCloseDate: addDays(complaintDate, CLOSE_WITHIN_DAYS),
         originLabel: ORIGINS.find((o) => o.value === form.origin)?.title,
         isEndCustomer,
         customerName: form.customerName.trim(),
@@ -913,9 +892,6 @@ function FileComplaintForm({ onReset }) {
       actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}
     >
       <form id="file-complaint-form" onSubmit={handleSubmit} noValidate className="flex w-full min-w-0 flex-col gap-4">
-        {originNotice && (
-          <Alert variant="info">{originNotice}</Alert>
-        )}
         <nav aria-label="Progress" className="flex flex-wrap gap-2">
           {steps.map((s) => (
             <a
@@ -1003,7 +979,7 @@ function FileComplaintForm({ onReset }) {
               )}
             </div>
 
-            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3 lg:grid-cols-5 md:col-span-2">
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-3 md:col-span-2">
               <TextInput
                 id="complaint-date"
                 label="Complaint Date"
@@ -1011,23 +987,6 @@ function FileComplaintForm({ onReset }) {
                 readOnly
                 disabled={isEdit}
                 hint={isEdit ? 'Filed date' : 'Today, automatic'}
-              />
-              <TextInput
-                id="complaint-target-close-date"
-                label="Target Close Date"
-                value={complaintDate ? formatDate(addDays(complaintDate, CLOSE_WITHIN_DAYS)) : ''}
-                readOnly
-                disabled={isEdit}
-                hint={`${CLOSE_WITHIN_DAYS} days from the complaint date`}
-              />
-              <TextInput
-                id="complaint-actual-close-date"
-                label="Actual Close Date"
-                value={editState.actualCloseDate ? formatDate(editState.actualCloseDate) : ''}
-                placeholder="Not closed yet"
-                readOnly
-                disabled={isEdit}
-                hint="Set when approved or rejected"
               />
               <TextInput
                 id="complaint-dealer-mobile"

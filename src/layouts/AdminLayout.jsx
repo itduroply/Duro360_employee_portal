@@ -23,7 +23,7 @@ export default function AdminLayout() {
   // A manager or accounts member with complaints to approve sees Complaints
   // even without the permission; the submenu then only holds My Approvals.
   const { access: complaintAccess, refresh: refreshComplaintAccess } = useComplaintAccess();
-  const complaintApprover = Boolean(complaintAccess?.isAccounts || complaintAccess?.pending > 0 || complaintAccess?.hasHistory);
+  const complaintApprover = Boolean(complaintAccess?.isAccounts || complaintAccess?.isCoordinator || complaintAccess?.pending > 0 || complaintAccess?.hasHistory);
 
   useEffect(() => {
     let cancelled = false;

@@ -95,10 +95,18 @@ const STEP_STYLE = {
 };
 
 export function complaintSteps(complaint, decisions = []) {
+  const coordinator = decisions.find((d) => d.stage === 'COORDINATOR');
   const manager = decisions.find((d) => d.stage === 'MANAGER');
   const accounts = decisions.find((d) => d.stage === 'ACCOUNTS');
   const status = complaint.status;
   const by = (d) => `${d.approver_name || '—'} · ${formatDateTime(d.decided_at)}`;
+
+  const coordinatorStep = coordinator
+    ? { state: coordinator.decision === 'APPROVED' ? 'done' : 'rejected', note: by(coordinator), detail: coordinator.reason }
+    : status === 'PENDING_COORDINATOR'
+      ? { state: 'current', note: 'With the Complaint Coordinator' }
+      // Older complaints were filed before this step existed.
+      : { state: 'skipped', note: 'Not part of this complaint' };
 
   const managerStep = manager
     ? { state: manager.decision === 'APPROVED' ? 'done' : 'rejected', note: by(manager), detail: manager.reason }
@@ -106,13 +114,15 @@ export function complaintSteps(complaint, decisions = []) {
       ? { state: 'current', note: `With ${complaint.current_approver_name || 'the reporting manager'}${complaint.manager_level ? ` (level ${complaint.manager_level})` : ''}` }
       : ['PENDING_ACCOUNTS', 'APPROVED'].includes(status) || (status === 'REJECTED' && accounts)
         ? { state: 'skipped', note: 'No manager in the reporting line' }
-        : { state: 'pending', note: '' };
+        : coordinatorStep.state === 'rejected'
+          ? { state: 'skipped', note: 'Not reached' }
+          : { state: 'pending', note: '' };
 
   const accountsStep = accounts
     ? { state: accounts.decision === 'APPROVED' ? 'done' : 'rejected', note: by(accounts), detail: accounts.reason }
     : status === 'PENDING_ACCOUNTS'
       ? { state: 'current', note: 'With the accounts team' }
-      : managerStep.state === 'rejected'
+      : managerStep.state === 'rejected' || coordinatorStep.state === 'rejected'
         ? { state: 'skipped', note: 'Not reached' }
         : { state: 'pending', note: '' };
 
@@ -126,6 +136,7 @@ export function complaintSteps(complaint, decisions = []) {
 
   return [
     { label: 'Filed', state: 'done', note: `${complaint.filed_by_name || '—'} · ${formatDateTime(complaint.created_at)}` },
+    { label: 'Coordinator review', ...coordinatorStep },
     { label: 'Manager approval', ...managerStep },
     { label: 'Accounts approval', ...accountsStep },
     finalStep,
@@ -135,7 +146,7 @@ export function complaintSteps(complaint, decisions = []) {
 export function ComplaintStepper({ complaint, decisions }) {
   const steps = complaintSteps(complaint, decisions);
   return (
-    <ol className="mb-6 grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:gap-y-0">
+    <ol className="mb-6 grid grid-cols-2 gap-y-4 sm:grid-cols-5 sm:gap-y-0">
       {steps.map((step, i) => {
         const style = STEP_STYLE[step.state];
         const mark = step.state === 'done' ? '✓' : step.state === 'rejected' ? '✕' : String(i + 1);
@@ -157,10 +168,14 @@ export function ComplaintStepper({ complaint, decisions }) {
   );
 }
 
+// How a decision-maker is named: "Complaint Coordinator", "accounts team" or "manager level 2".
+const stageName = (stage, level) => (stage === 'COORDINATOR' ? 'Complaint Coordinator' : stage === 'ACCOUNTS' ? 'accounts team' : `manager level ${level ?? '—'}`);
+
 // May this person decide the complaint right now?
 export function canDecide(complaint, user, access) {
   if (!complaint || !user) return false;
   const superAdmin = Boolean(user.roles?.includes('SUPERADMIN'));
+  if (complaint.status === 'PENDING_COORDINATOR') return superAdmin || Boolean(access?.isCoordinator);
   if (complaint.status === 'PENDING_MANAGER') return superAdmin || complaint.current_approver_id === user.id;
   if (complaint.status === 'PENDING_ACCOUNTS') return superAdmin || Boolean(access?.isAccounts);
   return false;
@@ -230,7 +245,9 @@ export function ComplaintDetails({ complaint, onChanged, onStage }) {
   }, [complaint]);
 
   const lines = Array.isArray(complaint.lines) ? complaint.lines : [];
-  const stageLabel = complaint.status === 'PENDING_MANAGER'
+  const stageLabel = complaint.status === 'PENDING_COORDINATOR'
+    ? 'Waiting on the Complaint Coordinator'
+    : complaint.status === 'PENDING_MANAGER'
     ? `Waiting on ${complaint.current_approver_name || 'the reporting manager'}${complaint.manager_level ? ` (level ${complaint.manager_level}${complaint.requested_level && complaint.requested_level !== complaint.manager_level ? `, band asked for level ${complaint.requested_level}` : ''})` : ''}`
     : complaint.status === 'PENDING_ACCOUNTS'
       ? 'Waiting on the accounts team'
@@ -238,12 +255,14 @@ export function ComplaintDetails({ complaint, onChanged, onStage }) {
 
   // Where the complaint stands now: who holds it, or who took the last decision.
   const lastDecision = decisions.length > 0 ? decisions[decisions.length - 1] : null;
-  const currentStage = complaint.status === 'PENDING_MANAGER'
+  const currentStage = complaint.status === 'PENDING_COORDINATOR'
+    ? 'Pending with the Complaint Coordinator'
+    : complaint.status === 'PENDING_MANAGER'
     ? `Pending with ${complaint.current_approver_name || 'the reporting manager'}`
     : complaint.status === 'PENDING_ACCOUNTS'
       ? 'Pending with the accounts team'
       : lastDecision
-        ? `${lastDecision.decision === 'APPROVED' ? 'Approved' : 'Rejected'} by ${lastDecision.approver_name || '—'} (${lastDecision.stage === 'ACCOUNTS' ? 'accounts team' : `manager level ${lastDecision.manager_level ?? '—'}`})`
+        ? `${lastDecision.decision === 'APPROVED' ? 'Approved' : 'Rejected'} by ${lastDecision.approver_name || '—'} (${stageName(lastDecision.stage, lastDecision.manager_level)})`
         : '';
 
   // Lets the modal show the status in its title row.
@@ -311,7 +330,7 @@ export function ComplaintDetails({ complaint, onChanged, onStage }) {
             {decisions.map((d) => (
               <div key={d.id} className={`rounded-xl border p-3 text-theme-sm ${d.decision === 'APPROVED' ? 'border-success-200 bg-success-50' : 'border-error-200 bg-error-50'}`}>
                 <p className="font-semibold text-gray-800">
-                  {d.decision === 'APPROVED' ? 'Approved' : 'Rejected'} by {d.approver_name || '—'} ({d.stage === 'ACCOUNTS' ? 'accounts team' : `manager level ${d.manager_level ?? '—'}`}) · {formatDateTime(d.decided_at)}
+                  {d.decision === 'APPROVED' ? 'Approved' : 'Rejected'} by {d.approver_name || '—'} ({stageName(d.stage, d.manager_level)}) · {formatDateTime(d.decided_at)}
                 </p>
                 {d.reason && <p className="mt-1 whitespace-pre-wrap text-gray-700">{d.reason}</p>}
               </div>
@@ -445,6 +464,7 @@ export function DecisionForm({ complaint, onDone }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const accounts = complaint.status === 'PENDING_ACCOUNTS';
+  const coordinator = complaint.status === 'PENDING_COORDINATOR';
 
   async function run() {
     if (!text.trim()) {
@@ -491,10 +511,10 @@ export function DecisionForm({ complaint, onDone }) {
           setError('');
         }}
         error={error}
-        placeholder={decision === 'REJECTED' ? 'The filer will see this reason.' : accounts ? 'Approving closes the approval. The filer is told.' : 'Approving sends the complaint to the accounts team.'}
+        placeholder={decision === 'REJECTED' ? 'The filer will see this reason. The complaint goes no further.' : accounts ? 'Approving closes the approval. The filer is told.' : coordinator ? 'Completing the review locks the filing and sends the complaint to the approving manager.' : 'Approving sends the complaint to the accounts team.'}
       />
       <Button variant={decision === 'REJECTED' ? 'danger' : 'primary'} onClick={run} isLoading={busy}>
-        {decision === 'REJECTED' ? 'Reject complaint' : accounts ? 'Approve complaint' : 'Approve and send to accounts'}
+        {decision === 'REJECTED' ? 'Reject complaint' : accounts ? 'Approve complaint' : coordinator ? 'Complete review and send on' : 'Approve and send to accounts'}
       </Button>
     </div>
   );
@@ -560,7 +580,7 @@ export default function ComplaintApprovalsPanel({ onChanged }) {
     { key: 'filed_by_name', label: 'Filed by' },
     { key: 'amount', label: 'Amount', align: 'right', render: (r) => formatRupees(r.amount) },
     { key: 'decision', label: 'My decision', render: (r) => <StatusChip status={r.decision === 'APPROVED' ? 'Approved' : 'Rejected'} /> },
-    { key: 'stage', label: 'As', render: (r) => (r.stage === 'ACCOUNTS' ? 'Accounts team' : `Manager, level ${r.manager_level ?? '—'}`) },
+    { key: 'stage', label: 'As', render: (r) => (r.stage === 'COORDINATOR' ? 'Complaint Coordinator' : r.stage === 'ACCOUNTS' ? 'Accounts team' : `Manager, level ${r.manager_level ?? '—'}`) },
     { key: 'reason', label: 'Remark or reason', render: (r) => <span className="whitespace-normal">{r.reason || '—'}</span> },
     { key: 'status', label: 'Now', render: (r) => <StatusChip status={COMPLAINT_STATUS_LABEL[r.status] || r.status} /> },
     { key: 'decided_at', label: 'When', render: (r) => formatDateTime(r.decided_at) },

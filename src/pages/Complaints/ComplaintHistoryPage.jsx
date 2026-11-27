@@ -21,7 +21,7 @@ const ORIGIN_LABEL = { DEALER: 'Dealer', END_CUSTOMER: 'End-Customer' };
 // The status filter above the table. Older statuses still on file count as pending.
 const FILTERS = [
   { key: 'all', label: 'All', statuses: [] },
-  { key: 'pending', label: 'Pending', statuses: ['PENDING_MANAGER', 'PENDING_ACCOUNTS', 'REGISTERED', 'IN_REVIEW'] },
+  { key: 'pending', label: 'Pending', statuses: ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_ACCOUNTS', 'REGISTERED', 'IN_REVIEW'] },
   { key: 'approved', label: 'Approved', statuses: ['APPROVED'] },
   { key: 'resolved', label: 'Resolved', statuses: ['RESOLVED'] },
   { key: 'rejected', label: 'Rejected', statuses: ['REJECTED'] },
@@ -40,6 +40,7 @@ function linesSummary(lines) {
 
 // Where a complaint stands, shown under its status pill.
 function stageNote(c) {
+  if (c.status === 'PENDING_COORDINATOR') return 'With the Complaint Coordinator';
   if (c.status === 'PENDING_MANAGER') return `With ${c.current_approver_name || 'the reporting manager'}`;
   if (c.status === 'PENDING_ACCOUNTS') return 'With the accounts team';
   if (c.status === 'REJECTED' && c.rejection_reason) return c.rejection_reason;
@@ -67,12 +68,11 @@ function FiledBanner({ filed, onAnother, onClose }) {
   );
 }
 
-// The filer may edit until the first approver decides. A complaint waiting on
-// the manager has no decision yet; one sent straight to accounts has no manager
-// level. The database checks this again when the edit is saved.
+// The filer may edit only while the complaint waits on the Complaint
+// Coordinator. The database checks this again when the edit is saved.
 function filerCanEdit(c, user) {
   if (!user || c.filed_by !== user.id) return false;
-  return c.status === 'PENDING_MANAGER' || (c.status === 'PENDING_ACCOUNTS' && c.manager_level == null);
+  return c.status === 'PENDING_COORDINATOR';
 }
 
 function ComplaintHistory() {

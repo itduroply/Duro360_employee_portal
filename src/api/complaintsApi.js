@@ -13,10 +13,11 @@ const COLUMNS =
 // Added by migrations 20261124120000_complaint_register_details.sql and 20261124130000_complaint_edit.sql.
 const DETAIL_COLUMNS = ', complaint_date, dealer_mobile, dealer_email, physical_visit, physical_visit_date, manufacturing_factory, version, edited_at, edited_by_name, branch_remarks, factory_response, target_close_date, actual_close_date';
 
-// Every status a complaint can hold. The first three are the approval flow
-// (migration 20261112130000); the rest are older statuses still on file.
-export const COMPLAINT_STATUSES = ['PENDING_MANAGER', 'PENDING_ACCOUNTS', 'APPROVED', 'REJECTED', 'REGISTERED', 'IN_REVIEW', 'RESOLVED'];
+// Every status a complaint can hold. The first four are the approval flow
+// (migrations 20261112130000 and 20261127120000); the rest are older statuses still on file.
+export const COMPLAINT_STATUSES = ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_ACCOUNTS', 'APPROVED', 'REJECTED', 'REGISTERED', 'IN_REVIEW', 'RESOLVED'];
 export const COMPLAINT_STATUS_LABEL = {
+  PENDING_COORDINATOR: 'Pending with Coordinator',
   PENDING_MANAGER: 'Pending with Manager',
   PENDING_ACCOUNTS: 'Pending with Accounts',
   APPROVED: 'Approved',
@@ -193,7 +194,7 @@ export const complaintsApi = {
   },
 
   // ── Approvals ───────────────────────────────────────────────
-  // What the signed-in person may do: { canFile, isAccounts, pending, hasHistory }.
+  // What the signed-in person may do: { canFile, isAccounts, isCoordinator, pending, hasHistory }.
   async access() {
     const { data, error } = await supabase.rpc('my_complaint_access');
     fail(error);
@@ -319,5 +320,5 @@ export const complaintsApi = {
     return data;
   },
   settings: () => invokeApprovals('settings'),
-  saveSettings: ({ bands, memberIds }) => invokeApprovals('save_settings', { bands, memberIds }),
+  saveSettings: ({ bands, memberIds, coordinatorIds }) => invokeApprovals('save_settings', { bands, memberIds, coordinatorIds }),
 };

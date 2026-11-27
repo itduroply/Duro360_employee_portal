@@ -35,6 +35,10 @@ const ComplaintHistoryPage = lazy(() => import('../pages/Complaints/ComplaintHis
 const ComplaintApprovalsPage = lazy(() => import('../pages/Complaints/ComplaintApprovalsPage.jsx'));
 const ComplaintSettingsPage = lazy(() => import('../pages/Complaints/ComplaintSettingsPage.jsx'));
 const ComplaintAccessPage = lazy(() => import('../pages/Complaints/ComplaintAccessPage.jsx'));
+const NewClaimPage = lazy(() => import('../pages/Expense/NewClaimPage.jsx'));
+const MyClaimsPage = lazy(() => import('../pages/Expense/MyClaimsPage.jsx'));
+const AdvancesPage = lazy(() => import('../pages/Expense/AdvancesPage.jsx'));
+const TravelRequestsPage = lazy(() => import('../pages/Expense/TravelRequestsPage.jsx'));
 const NotificationsPage = lazy(() => import('../pages/Notifications/NotificationsPage.jsx'));
 const ReportsPage = lazy(() => import('../pages/Reports/ReportsPage.jsx'));
 const AuditLogsPage = lazy(() => import('../pages/AuditLogs/AuditLogsPage.jsx'));
@@ -63,6 +67,12 @@ function moduleRoutes() {
     <Route key="complaints-approvals" path="complaints/approvals" element={<ComplaintApprovalsPage />} />,
     <Route key="complaints-settings" path="complaints/settings" element={<ComplaintSettingsPage />} />,
     <Route key="complaints-access" path="complaints/access" element={<ComplaintAccessPage />} />,
+    // Expense: one page per submenu item; "expense" alone opens New Claim.
+    <Route key="expense" path="expense" element={<Navigate to="new" replace />} />,
+    <Route key="expense-new" path="expense/new" element={<NewClaimPage />} />,
+    <Route key="expense-claims" path="expense/claims" element={<MyClaimsPage />} />,
+    <Route key="expense-advances" path="expense/advances" element={<AdvancesPage />} />,
+    <Route key="expense-travel" path="expense/travel" element={<TravelRequestsPage />} />,
     <Route key="notifications" path="notifications" element={<NotificationsPage />} />,
     <Route key="reports" path="reports" element={<ReportsPage />} />,
     <Route key="audit-logs" path="audit-logs" element={<AuditLogsPage />} />,
