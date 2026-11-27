@@ -4,8 +4,8 @@ import Button from '../../components/common/Button.jsx';
 import Modal from '../../components/common/Modal.jsx';
 import DataTable from '../../components/ModulePage/DataTable.jsx';
 import { creditApi } from './api/creditApi.js';
-import { formatDate, formatDateTime, rupees } from './lib/format.js';
-import { AttachmentLinks, NoteBadge, Req, RequestDetails, StatusPill, TextArea, TypePill, useList } from './components.jsx';
+import { formatDateTime, rupees } from './lib/format.js';
+import { AttachmentLinks, RequestDetails, StatusPill, TextArea, TypePill, useList } from './components.jsx';
 
 const EVENT_LABEL = { sent: 'Sent', query: 'Query', reply: 'Reply', firstApproved: 'Level approval', approved: 'Approved', rejected: 'Rejected', closed: 'Closed' };
 const EVENT_TONE = {
@@ -15,20 +15,10 @@ const EVENT_TONE = {
   closed: 'border-gray-300 bg-gray-100',
 };
 
-// The list does not carry the rejection message, so it is read from the
-// request's thread. Only the rows on the current page load it.
-function RejectReason({ requestId }) {
-  const loader = useCallback(() => creditApi.getEdpRequisitionThread(requestId), [requestId]);
-  const { data, loading } = useList(loader);
-  if (loading) return <span className="text-gray-400">Loading…</span>;
-  const reason = data?.events?.filter((e) => e.kind === 'rejected').pop()?.text;
-  return <span className="block max-w-xs whitespace-pre-wrap break-words text-gray-700">{reason || '—'}</span>;
-}
-
 // Who raised, who approved and who closed, in one place.
 function People({ request }) {
   const items = [
-    ['Requested by', request.requesterName, request.sentAt],
+    ['Req initiated', request.requesterName, request.sentAt],
     ['Approved by', request.approvedByName, request.approvedAt],
     ['Closed by', request.closedByName, request.closedAt],
   ];
@@ -45,21 +35,30 @@ function People({ request }) {
   );
 }
 
-// EDP closes the request as the last step. A remark is needed.
-function CloseBox({ requestId, onClosed }) {
+// EDP closes an approved request from the table row. Close opens a small box
+// that asks for the remark, which is optional.
+function CloseCell({ request, onClosed }) {
+  const [open, setOpen] = useState(false);
   const [remark, setRemark] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function close() {
-    if (!remark.trim()) {
-      setError('Remark is required to close a request.');
-      return;
-    }
+  if (request.status !== 'Approved') return <span className="text-gray-400">—</span>;
+
+  function dismiss() {
+    if (busy) return;
+    setOpen(false);
+    setRemark('');
+    setError('');
+  }
+
+  async function confirm() {
     setBusy(true);
     setError('');
     try {
-      const result = await creditApi.closeRequisition(requestId, remark);
+      const result = await creditApi.closeRequisition(request.id, remark);
+      setOpen(false);
+      setRemark('');
       onClosed(result.message);
     } catch (err) {
       setError(err.message || 'This request could not be closed.');
@@ -69,19 +68,73 @@ function CloseBox({ requestId, onClosed }) {
   }
 
   return (
-    <div className="mt-6 rounded-2xl border border-gray-200 bg-gray-50/60 p-5">
-      <p className="mb-3 text-theme-sm text-gray-700">This request is approved. Close it when your work on it is done.</p>
-      <TextArea id="cr-close-remark" label={<Req>Remark</Req>} value={remark} onChange={(e) => { setRemark(e.target.value); setError(''); }} error={error} placeholder="A remark is needed to close a request." />
-      <Button onClick={close} isLoading={busy}>
-        Close request
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}>
+        Close
       </Button>
-    </div>
+      <Modal
+        open={open}
+        title="Close request"
+        subtitle={`${request.dealerName} · ${request.ref}`}
+        onClose={dismiss}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={dismiss} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={confirm} isLoading={busy}>
+              Close request
+            </Button>
+          </div>
+        }
+      >
+        <TextArea id={`cr-close-remark-${request.id}`} label="Remark (optional)" value={remark} onChange={(e) => { setRemark(e.target.value); setError(''); }} error={error} placeholder="Add a remark if needed." />
+      </Modal>
+    </>
+  );
+}
+
+// A small line under the status pill: plain text with a tick or dot, not a
+// second pill, so the status column stays calm.
+const NOTE_TONE = { neutral: 'text-gray-500', success: 'text-success-700', warning: 'text-warning-700' };
+function StatusNote({ children, tone = 'neutral' }) {
+  return (
+    <span className={`inline-flex items-center gap-1 text-theme-xs font-medium ${NOTE_TONE[tone]}`}>
+      {tone === 'success' ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+      )}
+      {children}
+    </span>
+  );
+}
+
+// Opens the full request. The tooltip says what the icon does.
+function ExpandButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="View full details"
+      aria-label="View full details"
+      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600 transition-colors hover:bg-brand-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <polyline points="15 3 21 3 21 9" />
+        <polyline points="9 21 3 21 3 15" />
+        <line x1="21" y1="3" x2="14" y2="10" />
+        <line x1="3" y1="21" x2="10" y2="14" />
+      </svg>
+    </button>
   );
 }
 
 // One request: everything the Requester entered, who approved it, and the
 // timeline from sent to close.
-function Detail({ request, onClosed }) {
+function Detail({ request }) {
   const loader = useCallback(() => creditApi.getEdpRequisitionThread(request.id), [request.id]);
   const { data, error, loading } = useList(loader);
 
@@ -108,8 +161,6 @@ function Detail({ request, onClosed }) {
           </li>
         ))}
       </ol>
-
-      {summary.canClose && <CloseBox requestId={request.id} onClosed={onClosed} />}
     </div>
   );
 }
@@ -123,57 +174,39 @@ export default function EdpPanel() {
   const rows = data?.requisitions ?? [];
   const open = useMemo(() => rows.find((r) => r.id === selected) ?? null, [rows, selected]);
 
-  const baseColumns = [
+  // Key columns, then Action: remark (optional), Close and the expand icon.
+  const columns = [
     { key: 'dealerName', label: 'Dealer', render: (r) => (
       <div>
-        <p>{r.dealerName}</p>
+        <div className="flex items-center gap-2">
+          <p>{r.dealerName}</p>
+          <ExpandButton onClick={() => { setNotice(''); setSelected(r.id); }} />
+        </div>
         <p className="text-theme-xs font-normal text-gray-500">{r.ref} · {r.dealerCode}</p>
       </div>
     ) },
     { key: 'branchName', label: 'Branch' },
     { key: 'requestType', label: 'Type', render: (r) => <TypePill value={r.requestType} /> },
+    { key: 'requesterName', label: 'Requester' },
     { key: 'tempCreditAmount', label: 'Proposed limit', align: 'right', render: (r) => rupees(r.tempCreditAmount) },
     { key: 'status', label: 'Status', render: (r) => (
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-col items-start gap-1">
         <StatusPill status={r.status} />
-        {r.totalLevels > 1 && r.status === 'Pending' && <NoteBadge tone="brand">Level {r.approvalStage} pending from {r.assignedToName}</NoteBadge>}
-        {r.status === 'Approved' && <NoteBadge tone="brand">Ready to close</NoteBadge>}
-        {r.awaitingReply && <NoteBadge>Awaiting reply</NoteBadge>}
+        {r.totalLevels > 1 && r.status === 'Pending' && <StatusNote>Level {r.approvalStage} pending from {r.assignedToName}</StatusNote>}
+        {r.status === 'Approved' && <StatusNote tone="success">Ready to close</StatusNote>}
+        {r.awaitingReply && <StatusNote tone="warning">Awaiting reply</StatusNote>}
       </div>
     ) },
-    { key: 'requesterName', label: 'Requester' },
-    { key: 'assignedToName', label: 'Approver' },
+    { key: 'action', label: 'Action', render: (r) => (
+      <CloseCell
+        request={r}
+        onClosed={(message) => {
+          setNotice(message);
+          reload(true);
+        }}
+      />
+    ) },
   ];
-  const decisionColumn = { key: 'decisionByName', label: 'Decision', render: (r) => (r.decisionByName ? `${r.decisionByName} · ${formatDateTime(r.decisionAt)}` : '—') };
-  const closedColumn = { key: 'closedByName', label: 'Closed', render: (r) => (r.closedByName ? `${r.closedByName} · ${formatDateTime(r.closedAt)}` : '—') };
-  const messagesColumn = { key: 'messageCount', label: 'Messages', align: 'right' };
-
-  // Pending has no decision or close yet. Approved and Rejected show the date only.
-  const columnsFor = (tab) => {
-    if (tab === 'Pending') return [...baseColumns, messagesColumn];
-    if (tab === 'Approved') {
-      return [...baseColumns, { key: 'decisionAt', label: 'Approved on', render: (r) => formatDate(r.decisionAt) }, messagesColumn];
-    }
-    if (tab === 'Rejected') {
-      return [
-        ...baseColumns,
-        { key: 'rejectReason', label: 'Rejected reason', render: (r) => <RejectReason requestId={r.id} /> },
-        { key: 'decisionAt', label: 'Rejected on', render: (r) => formatDate(r.decisionAt) },
-        messagesColumn,
-      ];
-    }
-    if (tab === 'Closed') {
-      // Closed requests: the decision date (Approved or Rejected) and who closed it, no time stamps.
-      const decisionDate = {
-        key: 'decisionAt',
-        label: 'Approved date',
-        render: (r) => (r.status === 'Rejected' ? `Rejected · ${formatDate(r.decisionAt)}` : formatDate(r.decisionAt)),
-      };
-      const closedBy = { key: 'closedByName', label: 'Closed by', render: (r) => r.closedByName || '—' };
-      return [...baseColumns, decisionDate, closedBy, messagesColumn];
-    }
-    return [...baseColumns, decisionColumn, closedColumn, messagesColumn];
-  };
 
   return (
     <div>
@@ -185,24 +218,14 @@ export default function EdpPanel() {
         tabs={['All', 'Pending', 'Approved', 'Rejected', 'Closed']}
         searchPlaceholder="Search dealer, request or requester"
         searchFields={['dealerName', 'dealerCode', 'ref', 'requesterName']}
-        columns={columnsFor}
-        onRowClick={(r) => {
-          setNotice('');
-          setSelected(r.id);
-        }}
+        columns={columns}
+        compact
         empty={{ icon: 'dealers', title: loading ? 'Loading…' : 'No requests yet' }}
       />
 
       <Modal open={Boolean(open)} size="lg" title={open ? open.dealerName : ''} subtitle={open ? `Request ${open.ref}` : ''} onClose={() => setSelected(null)}>
         {open && (
-          <Detail
-            request={open}
-            onClosed={(message) => {
-              setNotice(message);
-              setSelected(null);
-              reload(true);
-            }}
-          />
+          <Detail request={open} />
         )}
       </Modal>
     </div>

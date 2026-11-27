@@ -12,10 +12,10 @@ export const SIDEBAR_FEATURES = [
   // { key: 'documents', label: 'Dealer Documents', path: 'documents', implemented: true },
   { key: 'queries', label: 'Dealer Queries', path: 'queries', implemented: true },
   { key: 'complaints', label: 'Complaints', path: 'complaints', implemented: true },
-  // Expense is open to every employee (BRD: all employees raise claims), so it
-  // is alwaysVisible and not an assignable permission.
+  // Expense is an assignable permission: only Super Admin sees it by default,
+  // others see it once Super Admin assigns it in Users.
   {
-    key: 'expense', label: 'Expense', path: 'expense', implemented: true, alwaysVisible: true,
+    key: 'expense', label: 'Expense', path: 'expense', implemented: true,
     children: [
       { key: 'expenseNew', label: 'New Claim', path: 'expense/new', implemented: true },
       { key: 'expenseClaims', label: 'My Claims', path: 'expense/claims', implemented: true },

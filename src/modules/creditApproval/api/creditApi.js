@@ -62,7 +62,9 @@ export const creditApi = {
   // Temporary unlock counts for one financial year.
   getPermanentInsight: (customerCode, financialYearStart) => call('get-permanent-insight', { customerCode, financialYearStart }),
   // attachments are results of uploadAttachment made before the request exists.
-  submitRequisition: (formData, attachments = []) => call('submit-requisition', { formData, attachments }),
+  // With a requisitionId the request is edited instead of created. That works only
+  // until an approver acts on it. The approvers are emailed again.
+  submitRequisition: (formData, attachments = [], requisitionId = undefined) => call('submit-requisition', { formData, attachments, requisitionId }),
 
   // The conversation on one request, plus the decision once there is one.
   async getQueryThread(requisitionId) {

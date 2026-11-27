@@ -178,6 +178,7 @@ export function RequestDetails({ request }) {
         <TypePill value={request.requestType} />
         <StatusPill status={request.status} />
         <span className="text-theme-xs text-gray-500">Sent {formatDateTime(request.sentAt)}</span>
+        {request.editedAt && <NoteBadge tone="brand">Edited {formatDateTime(request.editedAt)}</NoteBadge>}
         {request.totalLevels > 1 && <NoteBadge tone="brand">Level {request.approvalStage} of {request.totalLevels}</NoteBadge>}
       </div>
 

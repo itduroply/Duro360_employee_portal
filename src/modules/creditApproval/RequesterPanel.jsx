@@ -7,15 +7,44 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { creditApi } from './api/creditApi.js';
 import { formatDateTime, rupees, shortId } from './lib/format.js';
 import { NoteBadge, QueryThread, RequestDetails, StatusPill, TypePill, useList } from './components.jsx';
-import RequisitionForm from './RequisitionForm.jsx';
+import RequisitionForm, { canEditRequest } from './RequisitionForm.jsx';
 
 const TABS = ['All', 'Pending', 'Approved', 'Rejected'];
+
+// Edit is open until an approver acts on the request. After that it stays on
+// screen but is switched off, with a tooltip that says why.
+function EditButton({ request, onEdit }) {
+  const allowed = canEditRequest(request);
+  const reason = allowed
+    ? 'Edit this request. The approver will get a new email.'
+    : request.status === 'Pending'
+      ? 'This request has been approved at level 1, so it can no longer be edited.'
+      : `This request is ${request.status.toLowerCase()}, so it can no longer be edited.`;
+  return (
+    <span title={reason} className="inline-block">
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={!allowed}
+        aria-label={reason}
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+      >
+        Edit
+      </Button>
+    </span>
+  );
+}
 
 export default function RequesterPanel({ tab, onTab }) {
   const { user } = useAuth();
   const { data, error, loading, reload } = useList(creditApi.getRequesterRequisitions, 0, user?.id ? [`credit:user:${user.id}`] : []);
   const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState(null);
+  // The request being edited. While it is set, the form replaces the table.
+  const [editing, setEditing] = useState(null);
 
   const rows = data?.requisitions ?? [];
   const sellingBranches = data?.sellingBranches ?? [];
@@ -39,8 +68,29 @@ export default function RequesterPanel({ tab, onTab }) {
         {r.awaitingMyReply && <NoteBadge>Reply needed</NoteBadge>}
       </div>
     ) },
-    { key: 'assignedToName', label: 'With approver' },    { key: 'sentAt', label: 'Sent', render: (r) => formatDateTime(r.sentAt) },
+    { key: 'assignedToName', label: 'With approver' },
+    { key: 'sentAt', label: 'Sent', render: (r) => formatDateTime(r.sentAt) },
+    { key: 'action', label: 'Action', render: (r) => <EditButton request={r} onEdit={() => { setNotice(''); setEditing(r); }} /> },
   ];
+
+  if (editing) {
+    return (
+      <RequisitionForm
+        editing={editing}
+        sellingBranches={sellingBranches}
+        onCancel={() => setEditing(null)}
+        onSubmitted={(result) => {
+          setNotice(
+            `Request ${shortId(result.requisitionId)} updated and sent again to ${result.assignedToName}.` +
+              (result.approverNotified === false ? ` The email to the approver could not be sent (${result.emailError || 'unknown reason'}). The request is still in their inbox.` : '')
+          );
+          setEditing(null);
+          setSelected(null);
+          reload(true);
+        }}
+      />
+    );
+  }
 
   if (tab === 'Add Request') {
     return (
@@ -91,6 +141,9 @@ export default function RequesterPanel({ tab, onTab }) {
       <Modal open={Boolean(open)} size="lg" title={open ? `${open.dealerName}` : ''} subtitle={open ? `Request ${open.ref}` : ''} onClose={() => setSelected(null)}>
         {open && (
           <>
+            <div className="mb-4 flex justify-end">
+              <EditButton request={open} onEdit={() => { setNotice(''); setEditing(open); setSelected(null); }} />
+            </div>
             <RequestDetails request={open} />
             {open.awaitingMyReply && (
               <Alert variant="warning" className="mt-6">

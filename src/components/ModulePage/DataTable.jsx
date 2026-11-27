@@ -12,13 +12,15 @@ const CONTROL =
 
 export default function DataTable({
   title, rows = [], tabs = [], tabField = 'status', tabMatch, searchPlaceholder, searchFields = [], filters = [],columns,
-  empty, pageSize = 8, onRowClick, className = '',}) 
+  empty, pageSize = 8, onRowClick, className = '', compact = false,}) 
   {
   const [activeTab, setActiveTab] = useState(tabs[0]);
   const [search, setSearch] = useState('');
   const [filterValues, setFilterValues] = useState({});
   const [page, setPage] = useState(1);
   // `columns` may be a function of the active tab, for tabs that show different columns.
+  // compact: tighter side padding between columns (used by tables with many columns).
+  const tight = (cls) => (compact ? `${cls.replace(/(sm:)?px-[\d.]+/g, '').trim()} px-2.5` : cls);
   const cols = typeof columns === 'function' ? columns(activeTab) : columns;
   const hasToolbar =title || tabs.length > 0 || searchPlaceholder || filters.length > 0;
 
@@ -87,7 +89,7 @@ export default function DataTable({
           <thead className={`${TABLE_HEAD} bg-gray-50/60`}>
             <tr>
               {cols.map((c) => (
-                <th key={c.key} className={`${TH} ${c.align === 'right' ? 'text-right' : ''}`}>
+                <th key={c.key} className={`${tight(TH)} ${c.align === 'right' ? 'text-right' : ''}`}>
                   {c.label}
                 </th>
               ))}
@@ -104,7 +106,7 @@ export default function DataTable({
                   {cols.map((c, ci) => (
                     <td
                       key={c.key}
-                      className={`${TD} ${ci === 0 ? TD_PRIMARY : ''} ${c.align === 'right' ? 'text-right tabular-nums' : ''}`}
+                      className={`${tight(TD)} ${ci === 0 ? TD_PRIMARY : ''} ${c.align === 'right' ? 'text-right tabular-nums' : ''}`}
                     >
                       {c.render ? c.render(row) : row[c.key]}
                     </td>

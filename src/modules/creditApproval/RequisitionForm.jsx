@@ -6,7 +6,7 @@ import Select from '../../components/common/Select.jsx';
 import { INPUT, INPUT_OK, INPUT_ERROR, HINT_ERROR, LABEL } from '../../components/common/formStyles.js';
 import { creditApi } from './api/creditApi.js';
 import { AGEING_BUCKETS, formatWhen, rupees, toNumber, withCommas } from './lib/format.js';
-import { AttachmentPicker, Req, TextArea } from './components.jsx';
+import { AttachmentLinks, AttachmentPicker, Req, TextArea } from './components.jsx';
 
 const EMPTY = {
   requestType: 'Temporary',
@@ -46,6 +46,18 @@ const TEMPORARY_NUMERIC = ['amountToBeBilled', 'daysNeeded'];
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
+// Valid up to can be any past date, today, or up to 2 days ahead. Only dates
+// after that are blocked. The date is the device
+// date in local time, written as YYYY-MM-DD (toISOString would use UTC and can
+// be one day off in India).
+const VALID_UP_TO_DAYS = 2;
+function localDateString(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function validate(form) {
   const permanent = form.requestType === 'Permanent';
   const required = { ...REQUIRED, ...(permanent ? PERMANENT_ONLY : TEMPORARY_ONLY) };
@@ -56,6 +68,9 @@ function validate(form) {
   [...NUMERIC, ...(permanent ? ['averagePaymentDays'] : TEMPORARY_NUMERIC)].forEach((key) => {
     if (!errors[key] && !Number.isFinite(toNumber(form[key]))) errors[key] = 'Enter a number.';
   });
+  if (!permanent && !errors.validUpTo && form.validUpTo > localDateString(VALID_UP_TO_DAYS)) {
+    errors.validUpTo = 'Valid up to cannot be more than 2 days after today.';
+  }
   if (!errors.tempCreditAmount && toNumber(form.tempCreditAmount) <= 0) errors.tempCreditAmount = 'Proposed limit must be above zero.';
   // Optional. When it is filled it must be a whole number.
   if (permanent && String(form.chequeBounceCount ?? '').trim() && !Number.isInteger(toNumber(form.chequeBounceCount))) errors.chequeBounceCount = 'Enter a whole number.';
@@ -224,8 +239,18 @@ function Group({ title, children }) {
   );
 }
 
-export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel }) {
-  const [form, setForm] = useState(EMPTY);
+// A request can be edited until an approver acts on it.
+export const canEditRequest = (r) => r.status === 'Pending' && (r.approvalStage ?? 1) === 1;
+
+// Only the form's own fields are taken from a saved request.
+function formFrom(request) {
+  return Object.fromEntries(Object.keys(EMPTY).map((key) => [key, request[key] == null ? EMPTY[key] : String(request[key])]));
+}
+
+// `editing` is a saved request. The form then opens with its values and the
+// request type, branch and dealer are locked.
+export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel, editing = null }) {
+  const [form, setForm] = useState(editing ? formFrom(editing) : EMPTY);
   const [errors, setErrors] = useState({});
   const [summary, setSummary] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -248,6 +273,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
   }
 
   function changeType(type) {
+    if (editing) return;
     set('requestType', type);
     // Each type has its own required fields, so old messages no longer apply.
     setErrors({});
@@ -281,7 +307,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
 
   // Start on the first assigned branch.
   useEffect(() => {
-    if (sellingBranches.length === 0) return;
+    if (editing || sellingBranches.length === 0) return;
     const first = sellingBranches[0];
     setForm((f) => (f.branchCode ? f : { ...f, branchCode: first.code, branchName: first.name }));
   }, [sellingBranches]);
@@ -364,7 +390,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
     setSummary('');
     setSubmitting(true);
     try {
-      const result = await creditApi.submitRequisition(payloadOf(form), files);
+      const result = await creditApi.submitRequisition(payloadOf(form), files, editing?.id);
       onSubmitted(result);
     } catch (err) {
       setSummary(err.message || 'The request could not be sent.');
@@ -379,8 +405,12 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
   return (
     <form onSubmit={submit} noValidate>
       <div className="mb-6">
-        <h3 className="text-lg font-semibold text-gray-800">Dealer credit limit approval form</h3>
-        <p className="mt-1 text-theme-sm text-gray-500">Give the dealer details and the financial position for the credit limit request.</p>
+        <h3 className="text-lg font-semibold text-gray-800">{editing ? `Edit request ${editing.ref}` : 'Dealer credit limit approval form'}</h3>
+        <p className="mt-1 text-theme-sm text-gray-500">
+          {editing
+            ? 'Change what is needed and send it again. The approver gets a new email. You can edit until the approver acts on the request.'
+            : 'Give the dealer details and the financial position for the credit limit request.'}
+        </p>
       </div>
 
       {noBranch && (
@@ -398,6 +428,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
                 name="requestType"
                 checked={form.requestType === type}
                 onChange={() => changeType(type)}
+                disabled={Boolean(editing)}
                 className="h-4 w-4 cursor-pointer accent-brand-500"
               />
               {type}
@@ -408,7 +439,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
 
       <Group title="Branch and dealer">
         <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
-          {sellingBranches.length > 1 ? (
+          {sellingBranches.length > 1 && !editing ? (
             <div className="mb-4">
               <Select
                 id="cr-branchCode"
@@ -427,6 +458,9 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
             <TextInput id="cr-branchName" label="Branch name" value={form.branchName} disabled readOnly />
           )}
           <TextInput id="cr-branchCodeShown" label="Branch code" value={form.branchCode} disabled readOnly />
+          {editing ? (
+            <TextInput id="cr-dealerNameShown" label="Dealer name" value={form.dealerName} disabled readOnly />
+          ) : (
           <DealerPicker
             id="cr-dealerCode"
             customers={customers}
@@ -437,6 +471,7 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
             error={errors.dealerCode || customersError}
             hint={form.branchCode && !customersLoading && customers.length === 0 && !customersError ? 'No dealers found for this branch.' : ''}
           />
+          )}
           <TextInput id="cr-dealerCodeShown" label="Dealer code" value={form.dealerCode} disabled readOnly />
         </div>
       </Group>
@@ -507,6 +542,12 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
               />
             </div>
             <TextArea id="cr-remark" label={<Req>Remark</Req>} value={form.remark} onChange={(e) => set('remark', e.target.value)} error={errors.remark} placeholder="Why should this limit become permanent?" />
+            {editing && editing.attachments?.length > 0 && (
+              <div className="mb-4">
+                <p className="text-theme-xs font-medium text-gray-700">Files already on this request (they stay)</p>
+                <AttachmentLinks files={editing.attachments} />
+              </div>
+            )}
             <AttachmentPicker value={files} onChange={setFiles} />
             <p className="text-theme-xs text-gray-500">
               You do not choose the approvers. A Permanent request goes through the approval levels set by the administrator, in order. It is approved only after the last level approves.
@@ -519,17 +560,22 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
         </>
       ) : (
         <Group title="Credit limit request">
-          <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
             <MoneyInput id="cr-amountToBeBilled" label={<Req>Amount to be billed</Req>} value={form.amountToBeBilled} onChange={(v) => set('amountToBeBilled', v)} error={errors.amountToBeBilled} />
             <MoneyInput id="cr-tempCreditAmount" label={<Req>Proposed credit limit</Req>} value={form.tempCreditAmount} onChange={(v) => set('tempCreditAmount', v)} error={errors.tempCreditAmount} />
-            <TextInput id="cr-validUpTo" type="date" label={<Req>Valid up to</Req>} value={form.validUpTo} onChange={(e) => set('validUpTo', e.target.value)} error={errors.validUpTo} />
+            <TextInput id="cr-validUpTo" type="date" label={<Req>Valid up to</Req>} max={localDateString(VALID_UP_TO_DAYS)} hint="Latest date allowed is 2 days after today." value={form.validUpTo} onChange={(e) => set('validUpTo', e.target.value)} error={errors.validUpTo} />
             <TextInput id="cr-daysNeeded" label={<Req>Number of days needed</Req>} inputMode="numeric" value={form.daysNeeded} onChange={(e) => set('daysNeeded', e.target.value.replace(/\D/g, ''))} error={errors.daysNeeded} />
             <TextInput id="cr-paymentReceiveDate" type="date" label={<Req>Expected payment date</Req>} value={form.paymentReceiveDate} onChange={(e) => set('paymentReceiveDate', e.target.value)} error={errors.paymentReceiveDate} />
+            <TextArea id="cr-remark" label={<Req>Remark</Req>} value={form.remark} onChange={(e) => set('remark', e.target.value)} error={errors.remark} placeholder="Why does this dealer need the limit?" rows={1} />
           </div>
-          <TextArea id="cr-remark" label={<Req>Remark</Req>} value={form.remark} onChange={(e) => set('remark', e.target.value)} error={errors.remark} placeholder="Why does this dealer need the limit?" />
-          <AttachmentPicker value={files} onChange={setFiles} />
-          <p className="text-theme-xs text-gray-500">You do not choose the approver. The system picks one or two approvers from the routing rules set by the administrator. Either one can decide the request.</p>
-        </Group>
+          {editing && editing.attachments?.length > 0 && (
+              <div className="mb-4">
+                <p className="text-theme-xs font-medium text-gray-700">Files already on this request (they stay)</p>
+                <AttachmentLinks files={editing.attachments} />
+              </div>
+            )}
+            <AttachmentPicker value={files} onChange={setFiles} />
+          </Group>
       )}
 
       {summary && (
@@ -539,8 +585,8 @@ export default function RequisitionForm({ sellingBranches, onSubmitted, onCancel
       )}
 
       <div className="flex gap-3">
-        <Button type="submit" isLoading={submitting} disabled={noBranch}>
-          Send request
+        <Button type="submit" isLoading={submitting} disabled={noBranch && !editing}>
+          {editing ? 'Save and send again' : 'Send request'}
         </Button>
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
