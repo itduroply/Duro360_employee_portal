@@ -12,6 +12,8 @@ const rupees = (v) => `Rs. ${Number(v).toLocaleString('en-IN', { maximumFraction
 function stageText(row) {
   if (row.status === 'PENDING_COORDINATOR') return 'Waiting on the Complaint Coordinator';
   if (row.status === 'PENDING_MANAGER') return `Waiting on ${row.current_approver_name || 'the reporting manager'}`;
+  if (row.status === 'PENDING_LEVEL') return `Waiting on ${row.current_approver_name || 'the level approver'}`;
+  if (row.status === 'PENDING_FACTORY') return 'Waiting on the factory team';
   if (row.status === 'PENDING_ACCOUNTS') return 'Waiting on the accounts team';
   return '';
 }
@@ -50,6 +52,7 @@ export function complaintToPrint(row, statusLabel, extra = {}) {
     invoiceDate: row.invoice_date,
     factory: /trading/i.test(row.manufacturing_factory || '') ? '' : row.manufacturing_factory,
     amount: row.amount,
+    cnNumber: row.cn_number,
     lines: lines.map((l) => ({
       ...l,
       supplied: l.quantity,
@@ -151,6 +154,7 @@ export async function downloadComplaint(c) {
     ['Selling Branch', c.sellingBranch],
     ['Manufacturing Factory', c.factory],
     ['Complaint Amount', rupees(c.amount)],
+    ...(c.cnNumber ? [['CN Number', c.cnNumber]] : []),
   ]);
 
   autoTable(doc, {
@@ -181,7 +185,15 @@ export async function downloadComplaint(c) {
       body: c.decisions.map((d) => [
         d.decision === 'APPROVED' ? 'Approved' : 'Rejected',
         text(d.approver_name),
-        d.stage === 'COORDINATOR' ? 'Complaint Coordinator' : d.stage === 'ACCOUNTS' ? 'Accounts team' : `Manager level ${text(d.manager_level)}`,
+        d.stage === 'COORDINATOR'
+          ? 'Complaint Coordinator'
+          : d.stage === 'ACCOUNTS'
+            ? 'Accounts team'
+            : d.stage === 'FACTORY'
+              ? 'Factory team'
+              : d.stage === 'LEVEL'
+                ? `Level approver, level ${text(d.manager_level)}`
+                : `Reporting manager${d.manager_level ? `, level ${d.manager_level}` : ''}`,
         d.decided_at ? formatDateTime(d.decided_at) : '—',
         text(d.reason),
       ]),

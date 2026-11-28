@@ -1,5 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { usersApi } from '../../../api/usersApi';
 import { ASSIGNABLE_ADMIN_PERMISSIONS } from '../../../components/Sidebar/sidebarConfig.js';
 import Button from '../../../components/common/Button.jsx';
@@ -14,54 +13,8 @@ import { PermissionCheckboxes } from './AdminsPanel.jsx';
 // Keep in sync with EMPLOYEE_DEFAULT_PASSWORD in
 // supabase/functions/manage-users/index.ts (the server sets it, this only shows it).
 const EMPLOYEE_DEFAULT_PASSWORD = 'Duroply@123';
-// Rows sent per Edge Function call, so a large sheet never hits its time limit.
-const UPLOAD_CHUNK_SIZE = 25;
 // Rows drawn at first; "Show more" adds another page so a big sheet stays fast.
 const PAGE_SIZE = 50;
-
-// Header spellings accepted for each column, compared after lowercasing and
-// removing spaces/punctuation ("Employee ID", "employee_id", "Emp. Code" ...).
-const COLUMN_ALIASES = {
-  employeeId: ['employeeid', 'empid', 'employeecode', 'empcode', 'employeeno', 'empno', 'employeenumber'],
-  name: ['fullname', 'employeename', 'empname', 'name'],
-  email: ['email', 'emailid', 'emailaddress', 'officialemail', 'officialemailid', 'workemail', 'mail', 'mailid'],
-  branch: ['branch', 'branchname', 'sellingbranch', 'location', 'worklocation'],
-  reportingManager: ['reportingmanager', 'reportingmanagername', 'reportingto', 'reportsto', 'reportingmgr', 'manager', 'managername', 'l1manager'],
-};
-
-const headerKey = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-// HR sheets often have a title row or two above the real header, so look
-// for the first row (within the top 10) that has an Employee ID column.
-function parseEmployeeSheet(sheet) {
-  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
-  const headerIndex = grid.slice(0, 10).findIndex((row) => row.some((cell) => COLUMN_ALIASES.employeeId.includes(headerKey(cell))));
-  if (headerIndex === -1) {
-    throw new Error('No "Employee ID" column found. The sheet needs Full Name, Email and Employee ID columns.');
-  }
-
-  const header = grid[headerIndex].map(headerKey);
-  const col = Object.fromEntries(
-    Object.entries(COLUMN_ALIASES).map(([field, aliases]) => [field, header.findIndex((h) => aliases.includes(h))])
-  );
-  if (col.name === -1) throw new Error('No "Full Name" column found.');
-  const cell = (row, field) => (col[field] === -1 ? '' : String(row[col[field]] ?? '').trim());
-
-  // Everything else in the sheet is ignored. Duplicate IDs keep the first row.
-  const byId = new Map();
-  for (const row of grid.slice(headerIndex + 1)) {
-    const employeeId = String(row[col.employeeId] ?? '').trim().toUpperCase();
-    if (!employeeId || byId.has(employeeId)) continue;
-    byId.set(employeeId, {
-      employeeId,
-      name: cell(row, 'name'),
-      email: cell(row, 'email').toLowerCase(),
-      branch: cell(row, 'branch'),
-      reportingManager: cell(row, 'reportingManager'),
-    });
-  }
-  return [...byId.values()];
-}
 
 /* ------------------------------------------------------------------ */
 /* Icons: hand-drawn strokes in the portal's style (no icon library).  */
@@ -73,12 +26,6 @@ function Icon({ children, className = 'h-4 w-4' }) {
     </svg>
   );
 }
-const UploadCloudIcon = (p) => (
-  <Icon {...p}>
-    <path d="M6.5 14.5h-1a3.5 3.5 0 0 1-.4-6.97A5 5 0 0 1 14.6 6.9 3.8 3.8 0 0 1 14.5 14.5h-1" />
-    <path d="M10 17V9.5M7.5 12L10 9.5 12.5 12" />
-  </Icon>
-);
 const UsersIcon = (p) => (
   <Icon {...p}>
     <circle cx="7.5" cy="7" r="2.75" />
@@ -144,18 +91,6 @@ const TrashIcon = (p) => (
     <path d="M3.5 5.5h13M8 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M5.5 5.5l.7 10a1.5 1.5 0 0 0 1.5 1.4h4.6a1.5 1.5 0 0 0 1.5-1.4l.7-10" />
   </Icon>
 );
-const FileIcon = (p) => (
-  <Icon {...p}>
-    <path d="M5 2.5h6l4 4v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1Z" />
-    <path d="M11 2.5v4h4M7 11h6M7 14h4" />
-  </Icon>
-);
-const XIcon = (p) => (
-  <Icon {...p}>
-    <path d="M5 5l10 10M15 5L5 15" />
-  </Icon>
-);
-
 /* ------------------------------------------------------------------ */
 /* Small building blocks                                               */
 /* ------------------------------------------------------------------ */
@@ -235,11 +170,87 @@ const FILTERS = [
   ['INACTIVE', 'Inactive'],
 ];
 
-const SHEET_COLUMNS = ['Employee ID', 'Full Name', 'Email', 'Branch', 'Reporting Manager'];
+// Pulls the employee details from the HR database, so the Excel sheet is not needed
+// for people who already have a login. It updates name, mobile, reporting manager and
+// the HR details (department, designation, grade, region, HR branch, dates). It does not
+// create logins and does not change status, email or the selling branch.
+function HrSyncCard({ onSynced }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const loadStatus = () =>
+    usersApi
+      .hrSyncStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  async function sync() {
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      const r = await usersApi.syncHrUsers();
+      if (!r?.ok) throw new Error(r?.error || 'The sync failed.');
+      setResult(r);
+      onSynced?.();
+    } catch (err) {
+      setError(err.message || 'The sync failed.');
+    } finally {
+      setBusy(false);
+      loadStatus();
+    }
+  }
+
+  const last = status?.lastRun;
+  const missing = status?.withoutLogin ?? [];
+  return (
+    <div className="mb-6 rounded-3xl border border-gray-200/80 bg-white p-5 shadow-theme-xs sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-gray-800">Sync from HR database</h3>
+          
+        </div>
+        <Button onClick={sync} isLoading={busy}>Sync now</Button>
+      </div>
+      {error && <Alert variant="error" className="mt-4">{error}</Alert>}
+      {result && (
+        <Alert variant="success" className="mt-4">
+          Read {result.received} people from the HR database. {result.profilesUpdated} logins updated.
+          {result.withoutLogin > 0 ? ` ${result.withoutLogin} HR people have no login yet.` : ''}
+        </Alert>
+      )}
+      {last && (
+        <p className="mt-3 text-theme-xs text-gray-500">
+          Last run: {last.status === 'OK' ? 'worked' : last.status === 'FAILED' ? 'failed' : 'running'}
+          {last.finishedAt ? ` at ${new Date(last.finishedAt).toLocaleString('en-IN')}` : ''}
+          {last.status === 'OK' ? `, ${last.rows} people read` : ''}
+          {last.status === 'FAILED' && last.error ? `. ${last.error}` : ''}
+        </p>
+      )}
+      {missing.length > 0 && (
+        <details className="mt-3 text-theme-sm text-gray-600">
+          <summary className="cursor-pointer font-medium text-gray-700">{missing.length} in the HR database without a login</summary>
+          <ul className="mt-2 list-disc pl-5">
+            {missing.map((m) => (
+              <li key={m.employeeId}>
+                {m.employeeId} · {m.name || '—'}{m.designation ? ` · ${m.designation}` : ''}{m.status ? ` · ${m.status}` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
 
 /**
- * Employee logins, created from an uploaded HR Excel sheet. The sheet gives
- * Employee ID, Full Name, Email, Branch and Reporting Manager. Each Employee
+ * Employee logins. The details (department, designation, HR branch and so on) come from the
+ * HR database through the Sync card above. Each Employee
  * signs in with their Employee ID and starts with every Admin Console feature
  * except creating Dealers and Users; Edit features narrows that down
  * (see supabase/migrations/20260928120000_add_employee_login.sql).
@@ -253,13 +264,6 @@ export default function EmployeesPanel() {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  const fileInputRef = useRef(null);
-  const [fileName, setFileName] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
-  const [parsedRows, setParsedRows] = useState([]);
-  const [uploadProgress, setUploadProgress] = useState(null); // { done, total } while uploading
-  const [uploadResults, setUploadResults] = useState(null);
-
   const [passwordUser, setPasswordUser] = useState(null); // Employee whose password modal is open
   const [detailsUser, setDetailsUser] = useState(null); // Employee whose details modal is open
   const [deleteTarget, setDeleteTarget] = useState(null); // Employee waiting for delete confirmation
@@ -269,20 +273,6 @@ export default function EmployeesPanel() {
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
 
   const branchName = (id) => branches.find((b) => b.id === id)?.name;
-
-  // Match the sheet's Branch names to branch ids (ignoring case and spaces).
-  // Names that match nothing are listed below the file picker.
-  const { rowsToUpload, unmatchedBranches } = useMemo(() => {
-    const idByName = new Map(branches.map((b) => [headerKey(b.name), b.id]));
-    const unmatched = new Set();
-    const rows = parsedRows.map((row) => {
-      if (!row.branch) return row;
-      const branchId = idByName.get(headerKey(row.branch));
-      if (branchId === undefined) unmatched.add(row.branch);
-      return { ...row, branchId: branchId ?? '' };
-    });
-    return { rowsToUpload: rows, unmatchedBranches: [...unmatched] };
-  }, [parsedRows, branches]);
 
   function startEditing(employee) {
     setEditingId(employee.id);
@@ -324,7 +314,7 @@ export default function EmployeesPanel() {
 
   const stats = useMemo(() => {
     const active = employees.filter((e) => e.status === 'ACTIVE').length;
-    return { total: employees.length, active, inactive: employees.length - active, noBranch: employees.filter((e) => !e.selling_branch_id).length };
+    return { total: employees.length, active, inactive: employees.length - active, noBranch: employees.filter((e) => !e.hr_branch && !e.selling_branch_id).length };
   }, [employees]);
 
   const visibleEmployees = useMemo(() => {
@@ -332,7 +322,7 @@ export default function EmployeesPanel() {
     return employees.filter((e) => {
       if (statusFilter !== 'ALL' && e.status !== statusFilter) return false;
       if (!q) return true;
-      return [e.employee_id, e.name, e.email, e.reporting_manager, branchName(e.selling_branch_id)].some((v) => v?.toLowerCase().includes(q));
+      return [e.employee_id, e.name, e.email, e.reporting_manager, branchName(e.selling_branch_id), e.hr_branch, e.hr_sub_branch, e.department, e.designation].some((v) => v?.toLowerCase().includes(q));
     });
     // branchName only reads `branches`, so that is the dependency to watch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -341,64 +331,6 @@ export default function EmployeesPanel() {
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
   }, [search, statusFilter]);
-
-  function resetFile() {
-    setParsedRows([]);
-    setFileName('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }
-
-  function readFile(file) {
-    setError('');
-    setNotice('');
-    setUploadResults(null);
-    setParsedRows([]);
-    setFileName('');
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const workbook = XLSX.read(evt.target.result, { type: 'array' });
-        const rows = parseEmployeeSheet(workbook.Sheets[workbook.SheetNames[0]]);
-        if (rows.length === 0) setError('No rows with an Employee ID were found in this sheet.');
-        setParsedRows(rows);
-        setFileName(file.name);
-      } catch (err) {
-        setError(err.message || 'Could not read this file. Make sure it is a valid .xlsx/.xls/.csv file.');
-        resetFile();
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  function handleDrop(e) {
-    e.preventDefault();
-    setIsDragging(false);
-    if (uploadProgress) return;
-    readFile(e.dataTransfer.files?.[0]);
-  }
-
-  async function handleUpload() {
-    setError('');
-    setUploadResults(null);
-    const results = [];
-    setUploadProgress({ done: 0, total: rowsToUpload.length });
-    try {
-      for (let i = 0; i < rowsToUpload.length; i += UPLOAD_CHUNK_SIZE) {
-        const { results: chunkResults } = await usersApi.bulkCreateEmployees(rowsToUpload.slice(i, i + UPLOAD_CHUNK_SIZE));
-        results.push(...chunkResults);
-        setUploadProgress({ done: results.length, total: rowsToUpload.length });
-      }
-      resetFile();
-    } catch (err) {
-      setError(`${err.message || 'Upload stopped.'} ${results.length} of ${rowsToUpload.length} rows were processed.`);
-    } finally {
-      setUploadResults(results);
-      setUploadProgress(null);
-      await loadEmployees();
-    }
-  }
 
   function openPasswordModal(employee) {
     setError('');
@@ -437,10 +369,6 @@ export default function EmployeesPanel() {
     }
   }
 
-  const created = uploadResults?.filter((r) => r.ok).length ?? 0;
-  const skipped = uploadResults?.filter((r) => r.skipped).length ?? 0;
-  const failed = uploadResults?.filter((r) => !r.ok && !r.skipped) ?? [];
-  const progressPct = uploadProgress ? Math.round((uploadProgress.done / Math.max(uploadProgress.total, 1)) * 100) : 0;
   const shownEmployees = visibleEmployees.slice(0, visibleCount);
 
   return (
@@ -453,120 +381,7 @@ export default function EmployeesPanel() {
         <StatCard tone="gray" label="No branch yet" value={stats.noBranch} icon={<MapPinIcon className="h-6 w-6" />} />
       </div>
 
-      {/* Upload zone */}
-      <div className="mb-6 overflow-hidden rounded-3xl border border-gray-200/80 bg-gradient-to-br from-brand-25 via-white to-white p-5 shadow-theme-xs sm:p-6">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-500 text-white">
-            <SparkIcon className="h-4 w-4" />
-          </span>
-          <h3 className="text-base font-semibold text-gray-800">Upload employee sheet</h3>
-          <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-theme-xs font-medium text-gray-600">.xlsx · .xls · .csv</span>
-        </div>
-
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-          className={`mt-4 rounded-2xl border-2 border-dashed p-6 text-center transition-all sm:p-8 ${
-            isDragging ? 'scale-[1.01] border-brand-400 bg-brand-50' : 'border-gray-300 bg-white/70 hover:border-brand-300 hover:bg-brand-25'
-          }`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={(e) => readFile(e.target.files?.[0])}
-            disabled={Boolean(uploadProgress)}
-            className="hidden"
-          />
-
-          {parsedRows.length === 0 ? (
-            <>
-              <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-brand-500">
-                <UploadCloudIcon className="h-7 w-7" />
-              </span>
-              <p className="mt-3 text-sm font-semibold text-gray-800">Drop your Excel here</p>
-              <p className="mt-1 text-theme-sm text-gray-500">
-                or{' '}
-                <button type="button" onClick={() => fileInputRef.current?.click()} className="font-semibold text-brand-500 hover:text-brand-600">
-                  browse files
-                </button>
-              </p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                {SHEET_COLUMNS.map((c) => (
-                  <span key={c} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-theme-xs font-medium text-gray-600">
-                    {c}
-                  </span>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-4 text-left">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-success-50 text-success-600">
-                  <FileIcon className="h-6 w-6" />
-                </span>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-gray-800">{fileName}</p>
-                  <p className="text-theme-sm text-gray-500">
-                    {parsedRows.length.toLocaleString('en-IN')} employees found · first: {parsedRows[0].employeeId} — {parsedRows[0].name || '(no name)'}
-                    {parsedRows[0].branch ? ` — ${parsedRows[0].branch}` : ''}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={resetFile} disabled={Boolean(uploadProgress)}>
-                  <XIcon className="h-4 w-4" />
-                  Remove
-                </Button>
-                <Button onClick={handleUpload} isLoading={Boolean(uploadProgress)}>
-                  <UploadCloudIcon className="h-4 w-4" />
-                  Create {parsedRows.length.toLocaleString('en-IN')} logins
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {uploadProgress && (
-            <div className="mt-4 text-left">
-              <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                <div className="h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 transition-all" style={{ width: `${progressPct}%` }} />
-              </div>
-              <p className="mt-2 text-theme-xs font-medium text-gray-500">
-                Processing {uploadProgress.done} of {uploadProgress.total}…
-              </p>
-            </div>
-          )}
-        </div>
-
-        {unmatchedBranches.length > 0 && !uploadProgress && (
-          <Alert variant="error" className="mt-4">
-            These branch names in the sheet do not match any branch, so those employees will get no branch: {unmatchedBranches.slice(0, 10).join(', ')}
-            {unmatchedBranches.length > 10 ? `, and ${unmatchedBranches.length - 10} more` : ''}.
-          </Alert>
-        )}
-
-        {uploadResults && (
-          <Alert variant={failed.length ? 'error' : 'success'} className="mt-4">
-            <p>
-              {created} created, {skipped} already existed, {failed.length} failed.
-            </p>
-            {failed.length > 0 && (
-              <ul className="mt-2 list-disc pl-5">
-                {failed.slice(0, 20).map((r, i) => (
-                  <li key={`${r.employeeId}-${i}`}>
-                    {r.employeeId || '(no ID)'}: {r.message}
-                  </li>
-                ))}
-                {failed.length > 20 && <li>…and {failed.length - 20} more.</li>}
-              </ul>
-            )}
-          </Alert>
-        )}
-      </div>
+      <HrSyncCard onSynced={loadEmployees} />
 
       {error && (
         <Alert variant="error" className="mb-4">
@@ -603,7 +418,7 @@ export default function EmployeesPanel() {
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search ID, name, branch, manager"
+            placeholder="Search ID, name, branch, department, designation, manager"
             className={`${INPUT} ${INPUT_OK} rounded-2xl pl-11`}
           />
         </div>
@@ -618,6 +433,8 @@ export default function EmployeesPanel() {
                 <th className="whitespace-nowrap px-5 py-3.5">Employee</th>
                 <th className="whitespace-nowrap px-4 py-3.5">Email</th>
                 <th className="whitespace-nowrap px-4 py-3.5">Branch</th>
+                <th className="whitespace-nowrap px-4 py-3.5">Department</th>
+                <th className="whitespace-nowrap px-4 py-3.5">Designation</th>
                 <th className="whitespace-nowrap px-4 py-3.5">Reporting manager</th>
                 <th className="whitespace-nowrap px-4 py-3.5">Status</th>
                 <th className="whitespace-nowrap px-4 py-3.5">Features</th>
@@ -627,14 +444,14 @@ export default function EmployeesPanel() {
             <tbody>
               {isLoading && (
                 <tr>
-                  <td colSpan={7} className={TABLE_EMPTY}>
+                  <td colSpan={9} className={TABLE_EMPTY}>
                     Loading…
                   </td>
                 </tr>
               )}
               {!isLoading && visibleEmployees.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-14 text-center">
+                  <td colSpan={9} className="px-6 py-14 text-center">
                     <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-100 text-gray-400">
                       <UsersIcon className="h-7 w-7" />
                     </span>
@@ -642,7 +459,7 @@ export default function EmployeesPanel() {
                       {employees.length === 0 ? 'No employees yet' : 'No employees match this search'}
                     </p>
                     <p className="mt-1 text-theme-sm text-gray-500">
-                      {employees.length === 0 ? 'Upload an Excel sheet above to create their logins.' : 'Try a different word or filter.'}
+                      {employees.length === 0 ? 'Click Sync now above to load employees from the HR database.' : 'Try a different word or filter.'}
                     </p>
                   </td>
                 </tr>
@@ -673,9 +490,23 @@ export default function EmployeesPanel() {
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-4 py-3.5">
-                          <Pill icon={<MapPinIcon className="h-3.5 w-3.5" />} empty={!branchName(employee.selling_branch_id)}>
-                            {branchName(employee.selling_branch_id)}
+                          {/* The HR branch (from the HR database) first; the selling branch is set separately and is often empty. */}
+                          <Pill icon={<MapPinIcon className="h-3.5 w-3.5" />} empty={!(employee.hr_branch || branchName(employee.selling_branch_id))}>
+                            {employee.hr_branch || branchName(employee.selling_branch_id)}
                           </Pill>
+                          {employee.hr_sub_branch && employee.hr_sub_branch !== employee.hr_branch && (
+                            <span className="mt-1 block text-theme-xs text-gray-400">{employee.hr_sub_branch}</span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3.5 text-theme-sm text-gray-600">
+                          {employee.department || '—'}
+                          {employee.sub_department && employee.sub_department !== employee.department && (
+                            <span className="block text-theme-xs text-gray-400">{employee.sub_department}</span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3.5 text-theme-sm text-gray-600">
+                          {employee.designation || '—'}
+                          {employee.grade && <span className="block text-theme-xs text-gray-400">{employee.grade}</span>}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3.5">
                           <Pill icon={<UserCheckIcon className="h-3.5 w-3.5" />} empty={!employee.reporting_manager}>
@@ -731,7 +562,7 @@ export default function EmployeesPanel() {
                       </tr>
                       {editingId === employee.id && (
                         <tr className="bg-gray-50">
-                          <td colSpan={7} className="whitespace-normal px-5 py-5">
+                          <td colSpan={9} className="whitespace-normal px-5 py-5">
                             <p className={LABEL}>Features for {employee.name}</p>
                             <div className="mt-2 max-w-3xl">
                               <PermissionCheckboxes selected={editPermissions} onChange={setEditPermissions} />

@@ -47,6 +47,20 @@ async function invoke(action, payload = {}) {
 }
 
 export const usersApi = {
+  // Employee details from the HR database (supabase/migrations/20261128160000_hr_users_sync.sql).
+  // Both are Super Admin only; the database checks it.
+  // Reads the HR users, updates the matching logins. Returns { ok, received, profilesUpdated, withoutLogin } or { ok: false, error }.
+  syncHrUsers: async () => {
+    const { data, error } = await supabase.rpc('sync_hr_users_now');
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  // The last sync run and the HR people who have no login yet.
+  hrSyncStatus: async () => {
+    const { data, error } = await supabase.rpc('hr_users_status');
+    if (error) throw new Error(error.message);
+    return data;
+  },
   listAdmins: () => invoke('list_users', { role: 'ADMIN', employees: false }),
   listEmployees: () => invoke('list_users', { role: 'ADMIN', employees: true }),
   listDealers: () => invoke('list_users', { role: 'DEALER' }),

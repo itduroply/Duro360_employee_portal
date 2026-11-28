@@ -11,15 +11,22 @@ const COLUMNS =
   'installation_context, remarks, invoice_path, photo_paths, extra_paths, ' +
   'current_approver_id, current_approver_name, manager_level, requested_level, rejection_reason, approved_at';
 // Added by migrations 20261124120000_complaint_register_details.sql and 20261124130000_complaint_edit.sql.
-const DETAIL_COLUMNS = ', complaint_date, dealer_mobile, dealer_email, physical_visit, physical_visit_date, manufacturing_factory, version, edited_at, edited_by_name, branch_remarks, factory_response, target_close_date, actual_close_date';
+const DETAIL_COLUMNS = ', complaint_date, dealer_mobile, dealer_email, physical_visit, physical_visit_date, manufacturing_factory, version, edited_at, edited_by_name, branch_remarks, factory_response, target_close_date, actual_close_date, cn_number, cn_path, closed_at';
 
-// Every status a complaint can hold. The first four are the approval flow
-// (migrations 20261112130000 and 20261127120000); the rest are older statuses still on file.
-export const COMPLAINT_STATUSES = ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_ACCOUNTS', 'APPROVED', 'REJECTED', 'REGISTERED', 'IN_REVIEW', 'RESOLVED'];
+// A complaint value above this goes to the factory team after the level
+// approval. Same figure as complaint_factory_threshold() in the database.
+export const FACTORY_ABOVE = 50000;
+
+// Every status a complaint can hold. The PENDING ones and CLOSED are the approval flow
+// (migrations 20261127120000 and 20261128120000); APPROVED and the rest are older statuses still on file.
+export const COMPLAINT_STATUSES = ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_LEVEL', 'PENDING_FACTORY', 'PENDING_ACCOUNTS', 'CLOSED', 'APPROVED', 'REJECTED', 'REGISTERED', 'IN_REVIEW', 'RESOLVED'];
 export const COMPLAINT_STATUS_LABEL = {
   PENDING_COORDINATOR: 'Pending with Coordinator',
   PENDING_MANAGER: 'Pending with Manager',
+  PENDING_LEVEL: 'Pending with Level Approver',
+  PENDING_FACTORY: 'Pending with Factory',
   PENDING_ACCOUNTS: 'Pending with Accounts',
+  CLOSED: 'Closed',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
   REGISTERED: 'Registered',
@@ -228,6 +235,7 @@ export const complaintsApi = {
       ...(complaint.invoice_path ? [[complaint.invoice_path, 'Invoice']] : []),
       ...(complaint.photo_paths ?? []).map((p, i) => [p, `Photo ${i + 1}`]),
       ...(complaint.extra_paths ?? []).map((p, i) => [p, `Document ${i + 1}`]),
+      ...(complaint.cn_path ? [[complaint.cn_path, 'CN copy']] : []),
     ];
     if (paths.length === 0) return [];
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrls(paths.map(([p]) => p), 600);
@@ -238,7 +246,63 @@ export const complaintsApi = {
   notifyFiled: (complaintNo) => invokeApprovals('notify_filed', { complaintNo }),
   // decision is APPROVED or REJECTED. A reason is mandatory to reject.
   // `version` is the version the approver saw; a complaint edited since is refused.
-  decide: ({ complaintId, decision, reason, version }) => invokeApprovals('decide', { complaintId, decision, reason, version }),
+  // `amount` is the complaint value as the approver left it (the compensation); a changed
+  // value is saved and logged. `cnPath` (from uploadCn) is needed to approve at the accounts step.
+  decide: ({ complaintId, decision, reason, version, amount, cnPath, cnNumber }) =>
+    invokeApprovals('decide', { complaintId, decision, reason, version, amount, cnPath, cnNumber }),
+  // The accounts team's CN copy, stored in the complaint's folder. Returns the stored path.
+  async uploadCn(complaintId, file) {
+    const path = `${complaintId}/cn-${Date.now()}.${extension(file)}`;
+    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: file.type, upsert: false });
+    fail(error);
+    return path;
+  },
+  // Closed complaints this person may read: the accounts team and the Coordinators see all of them.
+  async closed({ page = 1, pageSize = 10, search = '' } = {}) {
+    const from = (page - 1) * pageSize;
+    const term = String(search ?? '').replace(/[,()*%\\]/g, ' ').trim();
+    let query = supabase
+      .from('complaints')
+      .select(COLUMNS + DETAIL_COLUMNS, { count: 'exact' })
+      .eq('status', 'CLOSED')
+      .order('closed_at', { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (term) {
+      query = query.or(['complaint_no', 'dealer_name', 'dealer_code', 'invoice_no'].map((column) => `${column}.ilike.*${term}*`).join(','));
+    }
+    const { data, error, count } = await query;
+    fail(error);
+    return { rows: data ?? [], total: count ?? 0 };
+  },
+  // The reporting manager and the level approver this complaint will go to:
+  // { manager: { name, level } | null, level: { name, level } | null }.
+  async routePreview(complaintId) {
+    const { data, error } = await supabase.rpc('complaint_route_preview', { p_complaint: complaintId });
+    fail(error);
+    return data;
+  },
+  // Complaints with the reporting manager (level 1). The Coordinator can still edit these
+  // until level 1 approves.
+  async withManager() {
+    const { data, error } = await supabase
+      .from('complaints')
+      .select(COLUMNS + DETAIL_COLUMNS)
+      .eq('status', 'PENDING_MANAGER')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    fail(error);
+    return data ?? [];
+  },
+  // The active approval bands (amount range -> approving level), lowest first.
+  async bands() {
+    const { data, error } = await supabase
+      .from('complaint_approval_band')
+      .select('min_amount, max_amount, manager_level')
+      .eq('is_active', true)
+      .order('min_amount');
+    fail(error);
+    return (data ?? []).map((b) => ({ min: Number(b.min_amount), max: b.max_amount === null ? null : Number(b.max_amount), level: b.manager_level }));
+  },
 
   // ── Edit (migration 20261124130000_complaint_edit.sql) ───────────
   // One complaint, read with the same row rules as the list.
@@ -320,5 +384,5 @@ export const complaintsApi = {
     return data;
   },
   settings: () => invokeApprovals('settings'),
-  saveSettings: ({ bands, memberIds, coordinatorIds }) => invokeApprovals('save_settings', { bands, memberIds, coordinatorIds }),
+  saveSettings: ({ bands, memberIds, coordinatorIds, factoryIds }) => invokeApprovals('save_settings', { bands, memberIds, coordinatorIds, factoryIds }),
 };

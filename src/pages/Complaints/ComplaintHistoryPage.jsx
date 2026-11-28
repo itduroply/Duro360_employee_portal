@@ -21,8 +21,9 @@ const ORIGIN_LABEL = { DEALER: 'Dealer', END_CUSTOMER: 'End-Customer' };
 // The status filter above the table. Older statuses still on file count as pending.
 const FILTERS = [
   { key: 'all', label: 'All', statuses: [] },
-  { key: 'pending', label: 'Pending', statuses: ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_ACCOUNTS', 'REGISTERED', 'IN_REVIEW'] },
-  { key: 'approved', label: 'Approved', statuses: ['APPROVED'] },
+  { key: 'pending', label: 'Pending', statuses: ['PENDING_COORDINATOR', 'PENDING_MANAGER', 'PENDING_LEVEL', 'PENDING_FACTORY', 'PENDING_ACCOUNTS', 'REGISTERED', 'IN_REVIEW'] },
+  // APPROVED is the older final status, from before complaints closed with a CN copy.
+  { key: 'approved', label: 'Closed', statuses: ['CLOSED', 'APPROVED'] },
   { key: 'resolved', label: 'Resolved', statuses: ['RESOLVED'] },
   { key: 'rejected', label: 'Rejected', statuses: ['REJECTED'] },
 ];
@@ -42,6 +43,8 @@ function linesSummary(lines) {
 function stageNote(c) {
   if (c.status === 'PENDING_COORDINATOR') return 'With the Complaint Coordinator';
   if (c.status === 'PENDING_MANAGER') return `With ${c.current_approver_name || 'the reporting manager'}`;
+  if (c.status === 'PENDING_LEVEL') return `With ${c.current_approver_name || 'the level approver'}`;
+  if (c.status === 'PENDING_FACTORY') return 'With the factory team';
   if (c.status === 'PENDING_ACCOUNTS') return 'With the accounts team';
   if (c.status === 'REJECTED' && c.rejection_reason) return c.rejection_reason;
   return '';
@@ -158,7 +161,7 @@ function ComplaintHistory() {
       <KpiStrip
         items={[
           { label: 'Pending approval', value: countOf('pending') !== undefined ? formatCount(countOf('pending')) : undefined, icon: 'outstanding', tone: 'warning' },
-          { label: 'Approved', value: countOf('approved') !== undefined ? formatCount(countOf('approved')) : undefined, icon: 'complaints', tone: 'brand' },
+          { label: 'Closed', value: countOf('approved') !== undefined ? formatCount(countOf('approved')) : undefined, icon: 'complaints', tone: 'brand' },
           { label: 'Resolved', value: countOf('resolved') !== undefined ? formatCount(countOf('resolved')) : undefined, icon: 'auditLogs', tone: 'success' },
           { label: 'Rejected', value: countOf('rejected') !== undefined ? formatCount(countOf('rejected')) : undefined, icon: 'queries', tone: 'error' },
         ]}

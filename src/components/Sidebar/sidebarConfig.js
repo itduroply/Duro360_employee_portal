@@ -84,9 +84,14 @@ export const COMPLAINT_PAGES = [
 // What one person may do in Complaints, from my_complaint_access(). While
 // that is still loading, `fallbackCanFile` (the complaints permission) is used.
 export function complaintRights({ isSuperAdmin = false, access = null, fallbackCanFile = false } = {}) {
-  const canFile = isSuperAdmin || (access ? Boolean(access.canFile) : fallbackCanFile);
-  const canApprove = isSuperAdmin || Boolean(access && (access.isAccounts || access.isCoordinator || access.pending > 0 || access.hasHistory));
-  return { canFile, canApprove, isSuperAdmin, pending: access?.pending ?? 0 };
+  // The Coordinator, the factory team and the accounts team only approve. They do not
+  // file complaints, so they get My Approvals and nothing else (a Super Admin keeps everything).
+  const approvalOnly = Boolean(access && (access.isAccounts || access.isCoordinator || access.isFactory));
+  const canFile = isSuperAdmin || (access ? Boolean(access.canFile) && !approvalOnly : fallbackCanFile);
+  const canApprove = isSuperAdmin || Boolean(access && (approvalOnly || access.pending > 0 || access.hasHistory));
+  // The Coordinator opens the edit page without the filing pages.
+  const canEdit = canFile || Boolean(access?.isCoordinator);
+  return { canFile, canEdit, canApprove, isSuperAdmin, pending: access?.pending ?? 0 };
 }
 
 // Gives the Complaints item its submenu. My Approvals carries the count of

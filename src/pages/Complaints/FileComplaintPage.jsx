@@ -10,7 +10,7 @@ import { CloseIcon } from '../../components/common/icons.jsx';
 import { HINT_ERROR, INPUT, INPUT_ERROR, INPUT_OK, LABEL } from '../../components/common/formStyles.js';
 import { complaintsApi } from '../../api/complaintsApi';
 import { formatDate } from '../../utils/format.js';
-import ComplaintGate from './ComplaintGate.jsx';
+import ComplaintGate, { useComplaintRights } from './ComplaintGate.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadComplaint } from './printComplaint.js';
 
@@ -487,7 +487,11 @@ function FileComplaintForm({ onReset }) {
   const { id: editId } = useParams();
   const isEdit = Boolean(editId);
   const [editState, setEditState] = useState({ loading: isEdit, error: '', complaintNo: '', complaintDate: '' });
-  const toHistory = (state) => navigate(isEdit ? '../../history' : '../history', { relative: 'path', state });
+  // The Coordinator has no history page; they go back to My Approvals.
+  const { rights: pageRights } = useComplaintRights();
+  const backPage = pageRights.canFile ? 'history' : 'approvals';
+  const backLabel = pageRights.canFile ? 'Complaint History' : 'My Approvals';
+  const toHistory = (state) => navigate(`${isEdit ? '../..' : '..'}/${backPage}`, { relative: 'path', state });
   const [done, setDone] = useState(null); // set once the complaint is saved: drives the success dialog
   const [downloadError, setDownloadError] = useState('');
   const [downloading, setDownloading] = useState(false);
@@ -879,7 +883,7 @@ function FileComplaintForm({ onReset }) {
 
   if (isEdit && (editState.loading || editState.error)) {
     return (
-      <ModulePage title="Edit Complaint" live actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}>
+      <ModulePage title="Edit Complaint" live actions={[{ label: backLabel, variant: 'secondary', onClick: () => toHistory() }]}>
         {editState.error ? <Alert variant="error">{editState.error}</Alert> : <p className="py-10 text-center text-theme-sm text-gray-500">Opening the complaint…</p>}
       </ModulePage>
     );
@@ -889,7 +893,7 @@ function FileComplaintForm({ onReset }) {
     <ModulePage
       title={isEdit ? `Edit Complaint ${editState.complaintNo}` : 'Register Complaint'}
       live
-      actions={[{ label: 'Complaint History', variant: 'secondary', onClick: () => toHistory() }]}
+      actions={[{ label: backLabel, variant: 'secondary', onClick: () => toHistory() }]}
     >
       <form id="file-complaint-form" onSubmit={handleSubmit} noValidate className="flex w-full min-w-0 flex-col gap-4">
         <nav aria-label="Progress" className="flex flex-wrap gap-2">
@@ -1258,7 +1262,7 @@ function FileComplaintForm({ onReset }) {
         icon={<Svg className="h-5 w-5">{CHECK}</Svg>}
         footer={
           <>
-            <Button variant="secondary" onClick={() => toHistory()}>Complaint History</Button>
+            <Button variant="secondary" onClick={() => toHistory()}>{backLabel}</Button>
             <Button variant="secondary" onClick={download} isLoading={downloading}>Download PDF</Button>
             <Button onClick={onReset}>Register Another</Button>
           </>
@@ -1283,8 +1287,10 @@ function FileComplaintForm({ onReset }) {
 export default function FileComplaintPage() {
   // A new key remounts the form, so it starts empty for the next complaint.
   const [round, setRound] = useState(0);
+  // The Coordinator may open the edit page without the right to file.
+  const { id: editingId } = useParams();
   return (
-    <ComplaintGate need="file">
+    <ComplaintGate need={editingId ? 'edit' : 'file'}>
       <FileComplaintForm key={round} onReset={() => setRound((n) => n + 1)} />
     </ComplaintGate>
   );
